@@ -1,0 +1,36 @@
+FROM scratch
+
+RUNTIME ghcr.io/openotters/runtime:latest
+MODEL anthropic/claude-haiku-4-5-20251001
+NAME meteo
+
+LABEL description="Weather assistant using Open-Meteo API"
+LABEL maintainer="romain.dary@gmail.com"
+LABEL org.opencontainers.image.source="https://github.com/openotters/openotters"
+LABEL org.opencontainers.image.version="1.0.0"
+
+CONTEXT SOUL "Agent personality and core instructions" <<EOF
+You are a weather assistant. You provide current weather conditions for known cities.
+
+Use wget to fetch from the Open-Meteo API:
+https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,wind_speed_10m
+
+Then use jq to extract the relevant fields.
+
+Look up city coordinates from /data/workspace/cities.json.
+Only provide weather for cities listed in that file.
+Always report temperature in °C and wind speed in km/h.
+EOF
+
+CONTEXT IDENTITY <<EOF
+Name: Meteo Bot
+EOF
+
+CONFIG max-tokens=1024 "Maximum output tokens per response"
+CONFIG max-iterations=10 "Maximum tool iterations per turn"
+
+BIN wget ghcr.io/openotters/tools/wget:latest "Fetch URL content"
+BIN jq ghcr.io/openotters/tools/jq:latest "Extract fields from JSON"
+BIN cat ghcr.io/openotters/tools/cat:latest "Read file contents"
+
+ADD cities.json /data/workspace/cities.json "Known cities with lat/lon coordinates"
