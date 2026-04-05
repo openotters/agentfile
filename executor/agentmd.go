@@ -12,7 +12,7 @@ func GenerateAgentMD(af *spec.Agentfile) string {
 	agent := af.Agent
 	var b strings.Builder
 
-	b.WriteString(fmt.Sprintf("# %s\n\n", agent.Name))
+	fmt.Fprintf(&b, "# %s\n\n", agent.Name)
 
 	if desc, ok := agent.Labels["description"]; ok {
 		b.WriteString(desc + "\n\n")
@@ -22,10 +22,10 @@ func GenerateAgentMD(af *spec.Agentfile) string {
 		b.WriteString("## Binaries\n\n")
 
 		for _, t := range agent.Bins {
-			b.WriteString(fmt.Sprintf("- **%s**", t.Name))
+			fmt.Fprintf(&b, "- **%s**", t.Name)
 
 			if t.Description != "" {
-				b.WriteString(fmt.Sprintf(" — %s", t.Description))
+				fmt.Fprintf(&b, " — %s", t.Description)
 			}
 
 			b.WriteByte('\n')
@@ -51,7 +51,7 @@ func GenerateAgentMD(af *spec.Agentfile) string {
 				desc = "-"
 			}
 
-			b.WriteString(fmt.Sprintf("| %s | %s |\n", filepath.Base(a.Dst), desc))
+			fmt.Fprintf(&b, "| %s | %s |\n", filepath.Base(a.Dst), desc)
 		}
 
 		b.WriteByte('\n')
