@@ -1,0 +1,10 @@
+FROM ghcr.io/openotters/agents/meteo:latest
+
+NAME meteo-fr
+
+CONTEXT IDENTITY <<EOF
+Name: Meteo Bot FR
+Lang: French
+EOF
+
+LABEL description="French weather assistant"

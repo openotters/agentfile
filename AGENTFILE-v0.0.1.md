@@ -4,46 +4,44 @@ An Agentfile is a declarative build specification for OpenOtters agents. It desc
 runtime, model, personality, binaries, data, memory — in a single file that can be built into an OCI artifact.
 
 <!-- TOC -->
-
 * [Agentfile Specification](#agentfile-specification)
-    * [Syntax Directive](#syntax-directive)
-    * [Instruction Reference](#instruction-reference)
-        * [FROM](#from)
-            * [Inheritance](#inheritance)
-        * [RUNTIME](#runtime)
-        * [MODEL](#model)
-        * [NAME](#name)
-        * [CONTEXT](#context)
-        * [CONFIG](#config)
-        * [BIN](#bin)
-            * [Binary OCI Image Structure](#binary-oci-image-structure)
-                * [Annotations](#annotations)
-                * [Binary Layer](#binary-layer)
-                * [Why This Strict Layout](#why-this-strict-layout)
-                * [Examples](#examples)
-        * [ADD](#add)
-        * [LABEL](#label)
-        * [ARG](#arg)
-    * [Complete Example](#complete-example)
-    * [Agent Filesystem Layout](#agent-filesystem-layout)
-        * [Reserved Context: AGENT.md](#reserved-context-agentmd)
-    * [OCI Artifact Structure](#oci-artifact-structure)
-        * [Manifest](#manifest)
-        * [Config Blob](#config-blob)
-        * [Layers](#layers)
-        * [Example](#example)
-    * [Push & Pull](#push--pull)
-        * [Push](#push)
-        * [Pull](#pull)
-    * [Export & Import](#export--import)
-        * [Export](#export)
-        * [Import](#import)
-    * [Out of Scope: Channels & Neighbors](#out-of-scope-channels--neighbors)
-        * [Channels](#channels)
-        * [Neighbors (Inter-Agent Communication)](#neighbors-inter-agent-communication)
-        * [Why This Separation Matters](#why-this-separation-matters)
-    * [Design Principles](#design-principles)
-
+  * [Syntax Directive](#syntax-directive)
+  * [Instruction Reference](#instruction-reference)
+    * [FROM](#from)
+      * [Inheritance](#inheritance)
+    * [RUNTIME](#runtime)
+    * [MODEL](#model)
+    * [NAME](#name)
+    * [CONTEXT](#context)
+    * [CONFIG](#config)
+    * [BIN](#bin)
+      * [Binary OCI Image Structure](#binary-oci-image-structure)
+        * [Annotations](#annotations)
+        * [Binary Resolution](#binary-resolution)
+        * [Design Rationale](#design-rationale)
+        * [Examples](#examples)
+    * [ADD](#add)
+    * [LABEL](#label)
+    * [ARG](#arg)
+  * [Complete Example](#complete-example)
+  * [Agent Filesystem Layout](#agent-filesystem-layout)
+    * [Reserved Context: AGENT.md](#reserved-context-agentmd)
+  * [OCI Artifact Structure](#oci-artifact-structure)
+    * [Manifest](#manifest)
+    * [Config Blob](#config-blob)
+    * [Layers](#layers)
+    * [Example](#example)
+  * [Push & Pull](#push--pull)
+    * [Push](#push)
+    * [Pull](#pull)
+  * [Export & Import](#export--import)
+    * [Export](#export)
+    * [Import](#import)
+  * [Out of Scope: Channels & Neighbors](#out-of-scope-channels--neighbors)
+    * [Channels](#channels)
+    * [Neighbors (Inter-Agent Communication)](#neighbors-inter-agent-communication)
+    * [Why This Separation Matters](#why-this-separation-matters)
+  * [Design Principles](#design-principles)
 <!-- TOC -->
 
 ## Syntax Directive
@@ -76,19 +74,25 @@ An agent can only inherit from one parent (no diamond dependencies).
 
 When using `FROM <agent-ref>`, the child inherits the parent's full definition and can override or extend it:
 
-| Instruction             | Behavior                                       |
-|-------------------------|------------------------------------------------|
-| `RUNTIME`               | Overrides parent                               |
-| `MODEL`, `MODE`, `NAME` | Overrides parent                               |
-| `CONTEXT`               | Same-name overrides parent, new names appended |
-| `CONFIG`                | Merged (child wins on conflicts)               |
-| `BIN`                   | Appended to parent's binary list               |
-| `ADD`                   | Appended to parent's files                     |
-| `LABEL`                 | Merged (child wins on key conflicts)           |
+| Instruction             | Behavior                                           |
+|-------------------------|----------------------------------------------------|
+| `RUNTIME`               | Overrides parent, clears all accumulated `CONFIG`s |
+| `MODEL`, `NAME`         | Overrides parent                                   |
+| `CONTEXT`               | Same-name overrides parent, new names appended     |
+| `CONFIG`                | Appended (cleared if `RUNTIME` is overridden)      |
+| `BIN`                   | Appended to parent's binary list                   |
+| `ADD`                   | Appended to parent's files                         |
+| `LABEL`                 | Merged (child wins on key conflicts)               |
 
 ### RUNTIME
 
-Specifies the base OCI image for the agent runtime.
+Specifies the OCI image containing the agent runtime binary. The image **must** follow the
+[Binary OCI Image Structure](#binary-oci-image-structure) — the same `vnd.openotters.bin.*` annotation contract
+used by `BIN` instructions. The executor pulls the image, extracts the binary, and places it at
+`usr/local/bin/runtime` in the agent filesystem.
+
+Setting `RUNTIME` overrides any previous `RUNTIME` instruction and **clears all accumulated `CONFIG` entries**,
+since configuration keys are runtime-specific.
 
 ```agentfile
 RUNTIME ghcr.io/openotters/runtime:latest
@@ -103,30 +107,6 @@ config) — the Agentfile never contains API keys.
 MODEL anthropic/claude-haiku-4-5-20251001
 MODEL openai/gpt-4o
 ```
-
-### MODE
-
-Sets the structured output mode for the LLM. Controls how the runtime enforces JSON schema compliance when the
-agent produces structured responses.
-
-```agentfile
-MODE auto
-MODE json
-MODE tool
-MODE text
-```
-
-| Value  | Behavior                                                                                        |
-|--------|-------------------------------------------------------------------------------------------------|
-| `auto` | Provider chooses the best available strategy (default)                                          |
-| `json` | Native JSON schema mode — provider enforces schema at generation time                           |
-| `tool` | Schema is wrapped as a forced tool call — provider enforces via tool calling constraints        |
-| `text` | Schema is injected into the system prompt — LLM response is parsed and validated after the fact |
-
-If omitted, `auto` is assumed. The reliability decreases from `json` → `tool` → `text`, but compatibility
-increases. `auto` lets the provider pick the best available option.
-
-Format: `MODE <auto|json|tool|text>`
 
 ### NAME
 
@@ -222,66 +202,88 @@ Format: `BIN <name> <oci-ref> [description] [<<MARKER usage MARKER]`
 
 #### Binary OCI Image Structure
 
-A binary image is a minimal OCI image containing a statically-linked binary and an optional usage layer.
+A bin is a **regular OCI image** — any image that carries the `vnd.openotters.bin.*` annotations. There is no
+special base image requirement: the image can be built `FROM scratch`, `FROM alpine`, or any other base. The
+annotations tell the runtime where to find the binary and its metadata inside the image filesystem.
+
+It is recommended to set an `ENTRYPOINT` in the Dockerfile so the image remains usable as a standalone container
+(e.g. `docker run ghcr.io/openotters/tools/jq:latest`). However, the Agentfile executor **ignores** the
+entrypoint — binary resolution relies exclusively on the `vnd.openotters.bin.*` annotations. This removes
+ambiguity: an image may have multiple executables, shell wrappers, or symlinks, but the annotations define exactly
+which binary the agent uses.
 
 ##### Annotations
 
-The image manifest **must** carry annotations that describe the tool:
+The image manifest **must** carry annotations that describe the bin:
 
-| Annotation                        | Required | Type   | Description                        |
-|-----------------------------------|----------|--------|------------------------------------|
-| `vnd.openotters.tool.bin`         | yes      | path   | Path to the binary in the layer    |
-| `vnd.openotters.tool.description` | no       | string | One-line description for the LLM   |
-| `vnd.openotters.tool.usage`       | no       | path   | Path to the usage guidelines layer |
+| Annotation                       | Required | Type   | Default     | Description                                  |
+|----------------------------------|----------|--------|-------------|----------------------------------------------|
+| `vnd.openotters.bin.name`        | yes      | string | —           | Binary name (e.g. `wget`, `jq`)              |
+| `vnd.openotters.bin.path`        | no       | path   | `/`         | Directory containing the binary in the image |
+| `vnd.openotters.bin.description` | no       | string | —           | One-line description for the LLM             |
+| `vnd.openotters.bin.usage`       | no       | path   | `/USAGE.md` | Path to a USAGE.md file inside the image     |
 
-- `vnd.openotters.tool.description` is a **string value** directly in the annotation.
-- `vnd.openotters.tool.usage` is a **path to a layer** — usage guidelines can be rich, multiline markdown that
-  the runtime injects directly into the agent's context.
+The runtime resolves the binary location as `{path}/{name}` (e.g. `/bin/wget` when `path=/bin` and `name=wget`,
+or `/wget` when path is defaulted).
 
-This makes binary images **self-describing**: a registry can be browsed for binaries without needing an Agentfile.
-When the Agentfile `BIN` instruction provides a description or usage, the **Agentfile wins** (explicit override
-over embedded default).
+- `vnd.openotters.bin.description` is a **string value** directly in the annotation.
+- `vnd.openotters.bin.usage` points to a **file inside the image** — usage guidelines can be rich, multiline
+  markdown that the runtime injects directly into the agent's context.
 
-##### Binary Layer
+This makes bin images **self-describing**: a registry can be browsed for available binaries without needing an
+Agentfile. When the Agentfile `BIN` instruction provides a description or usage, the **Agentfile wins** (explicit
+override over embedded default).
 
-The tool binary. The runtime reads the `vnd.openotters.tool.bin` annotation to know which file to extract:
+The `vnd.openotters.bin.*` annotations are a **public convention** — any OCI image can adopt them to declare
+that it contains an executable binary with associated metadata. This allows tooling outside of the Agentfile
+ecosystem (registries, CI pipelines, other agent frameworks) to discover and consume bin images using the same
+annotation contract.
 
-1. **Direct layer** — a layer annotated with `org.opencontainers.image.title: {name}` (scratch-based images)
-2. **Tar layer fallback** — a tar/gzip layer containing the named entry (standard OCI image layers)
+##### Binary Resolution
 
-The extracted binary is placed at `usr/bin/{name}` in the agent filesystem.
+The runtime uses the `vnd.openotters.bin.name` and `vnd.openotters.bin.path` annotations to locate the binary:
 
-##### Why This Strict Layout
+1. Compute the full path: `{path}/{name}` (with path defaulting to `/`)
+2. Extract the binary from the image filesystem at that path
+3. Place it at `usr/bin/{name}` in the agent filesystem
 
-The constraint exists so that binary extraction is **fast, predictable, and runtime-agnostic**:
+##### Design Rationale
 
-- **No filesystem interpretation** — the runtime does not need to understand overlayfs, whiteouts, or multi-layer
-  union mounts. It extracts exactly one file. This makes binaries usable on any executor (filesystem, Docker,
-  Kubernetes) without requiring a container runtime to unpack the image.
-- **No path ambiguity** — the `vnd.openotters.tool.bin` annotation tells the runtime exactly what to extract.
+- **Regular OCI images** — bins are standard images, buildable with any Dockerfile or OCI build tool. No special
+  image format or scratch-only constraint.
+- **Annotation-driven discovery** — the `vnd.openotters.bin.*` annotations make the binary location explicit.
   No entrypoint metadata, PATH resolution, or symlink traversal needed.
-- **Minimal image size** — `FROM scratch` with a static binary produces images in the single-digit MB range.
-  No base OS, no shell, no libc. This keeps pull times fast and storage cheap.
-- **Multi-arch support** — binary images can use OCI image indexes (manifest lists) for multi-platform support.
+- **Minimal recommended** — while any base is supported, `FROM scratch` with a static binary produces images in
+  the single-digit MB range. This keeps pull times fast and storage cheap.
+- **Multi-arch support** — bin images can use OCI image indexes (manifest lists) for multi-platform support.
   The runtime resolves the correct platform manifest automatically (matching `GOOS`/`GOARCH`).
 
 ##### Examples
 
-Flat layout (scratch-based, one file per layer):
+Scratch-based (binary at root):
 
 ```
 image
-├── layer: jq        # vnd.openotters.tool.bin = "jq"
-└── layer: USAGE.md  # vnd.openotters.tool.usage = "USAGE.md"
+  annotations:
+    vnd.openotters.bin.name: jq
+    # vnd.openotters.bin.path defaults to "/"  → binary at /jq
+    # vnd.openotters.bin.usage defaults to "/USAGE.md"
+  filesystem:
+    /jq
+    /USAGE.md
 ```
 
-Folder layout (standard OCI build with tar layers):
+Standard layout (binary in /bin):
 
 ```
 image
-└── layer (tar)
-    ├── bin/jq        # vnd.openotters.tool.bin = "bin/jq"
-    └── doc/USAGE.md  # vnd.openotters.tool.usage = "doc/USAGE.md"
+  annotations:
+    vnd.openotters.bin.name: jq
+    vnd.openotters.bin.path: /bin
+    vnd.openotters.bin.usage: /doc/USAGE.md
+  filesystem:
+    /bin/jq
+    /doc/USAGE.md
 ```
 
 ### ADD
@@ -380,6 +382,7 @@ be mounted read-only in containerized deployments.
 ```
 <agent-root>/
 ├── etc/
+│   ├── agent.yaml                # spec-level agent config (generated by executor)
 │   ├── context/                  # from CONTEXT instructions + auto-generated AGENT.md
 │   │   ├── AGENT.md              # auto-generated (reserved)
 │   │   ├── SOUL.md
@@ -387,7 +390,10 @@ be mounted read-only in containerized deployments.
 │   └── data/                     # from ADD instructions
 │       └── cities.json
 ├── usr/
-│   └── bin/                      # binaries (pulled from OCI at deploy time)
+│   ├── local/
+│   │   └── bin/
+│   │       └── runtime           # runtime binary (pulled from RUNTIME OCI image)
+│   └── bin/                      # tool binaries (pulled from BIN OCI images)
 │       ├── wget
 │       ├── jq
 │       └── cat
@@ -398,15 +404,17 @@ be mounted read-only in containerized deployments.
         └── memory.db             # SQLite conversation store (read-write)
 ```
 
-| Path                   | Access     | Source                 | Purpose                      |
-|------------------------|------------|------------------------|------------------------------|
-| `etc/context/`         | read-only  | `CONTEXT` instructions | System prompt context files  |
-| `etc/context/AGENT.md` | read-only  | auto-generated         | Agent metadata, bins, data   |
-| `etc/data/`            | read-only  | `ADD` instructions     | Static data files            |
-| `usr/bin/`             | read-only  | `BIN` OCI images       | Binaries                     |
-| `workspace/`           | read-write | —                      | General-purpose working dir  |
-| `tmp/`                 | read-write | —                      | Ephemeral scratch space      |
-| `var/lib/`             | read-write | —                      | Persistent state (memory.db) |
+| Path                    | Access     | Source                 | Purpose                          |
+|-------------------------|------------|------------------------|----------------------------------|
+| `etc/agent.yaml`        | read-only  | executor-generated     | Agent config (name, model, tools)|
+| `etc/context/`          | read-only  | `CONTEXT` instructions | System prompt context files      |
+| `etc/context/AGENT.md`  | read-only  | auto-generated         | Agent metadata, bins, data       |
+| `etc/data/`             | read-only  | `ADD` instructions     | Static data files                |
+| `usr/local/bin/runtime` | read-only  | `RUNTIME` OCI image    | Runtime binary                   |
+| `usr/bin/`              | read-only  | `BIN` OCI images       | Tool binaries                    |
+| `workspace/`            | read-write | —                      | General-purpose working dir      |
+| `tmp/`                  | read-write | —                      | Ephemeral scratch space          |
+| `var/lib/`              | read-write | —                      | Persistent state (memory.db)     |
 
 ### Reserved Context: AGENT.md
 

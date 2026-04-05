@@ -17,7 +17,7 @@ https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=te
 
 Then use jq to extract the relevant fields.
 
-Look up city coordinates from /data/workspace/cities.json.
+Look up city coordinates from cities.json.
 Only provide weather for cities listed in that file.
 Always report temperature in °C and wind speed in km/h.
 EOF
@@ -30,7 +30,11 @@ CONFIG max-tokens=1024 "Maximum output tokens per response"
 CONFIG max-iterations=10 "Maximum tool iterations per turn"
 
 BIN wget ghcr.io/openotters/tools/wget:latest "Fetch URL content"
-BIN jq ghcr.io/openotters/tools/jq:latest "Extract fields from JSON"
+BIN jq ghcr.io/openotters/tools/jq:latest "Extract fields from JSON" <<EOF
+First line is the jq expression. Remaining lines are the JSON input.
+Example: .current.temperature_2m
+{"current":{"temperature_2m":25.2}}
+EOF
 BIN cat ghcr.io/openotters/tools/cat:latest "Read file contents"
 
 ADD cities.json /data/workspace/cities.json "Known cities with lat/lon coordinates"
