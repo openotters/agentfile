@@ -2,6 +2,7 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/openotters/agentfile.svg)](https://pkg.go.dev/github.com/openotters/agentfile)
 [![Go Report Card](https://goreportcard.com/badge/github.com/openotters/agentfile)](https://goreportcard.com/report/github.com/openotters/agentfile)
+[![golangci-lint](https://github.com/openotters/agentfile/actions/workflows/golangci.yml/badge.svg)](https://github.com/openotters/agentfile/actions/workflows/golangci.yml)
 [![License](https://img.shields.io/github/license/openotters/agentfile)](LICENSE)
 
 Dockerfile for AI agents — define, build, and distribute autonomous agents as OCI artifacts.
