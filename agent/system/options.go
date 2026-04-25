@@ -102,6 +102,27 @@ func WithStaticModelResolver(apiURL, apiKey string) AgentOption {
 	return func(a *Agent) { a.ws.modelResolver = model.StaticResolver(apiURL, apiKey) }
 }
 
+// DigestResolver returns the OCI digest of an image reference (or the
+// empty string if the resolver can't answer). Used by workspace
+// materialisation to record provenance into agent.yaml.
+type DigestResolver func(ref string) string
+
+// WithDigestResolver wires a digest resolver into the workspace. The
+// resolver is consulted for the agent's own image, the RUNTIME image,
+// and every BIN tool, with the results written into the resolved
+// agent.yaml's provenance block + per-tool ref/digest fields.
+func WithDigestResolver(r DigestResolver) AgentOption {
+	return func(a *Agent) { a.ws.digestResolver = r }
+}
+
+// WithImageRef tells the workspace which image ref produced this
+// agent. Without it, agent.yaml's provenance.image_digest stays empty
+// because the workspace materialiser otherwise has no canonical
+// "this is the agent image" handle — the daemon does.
+func WithImageRef(ref string) AgentOption {
+	return func(a *Agent) { a.ws.imageRef = ref }
+}
+
 // WithStdout sets the writer for agent stdout.
 func WithStdout(w io.Writer) AgentOption {
 	return func(a *Agent) { a.proc.stdout = w }

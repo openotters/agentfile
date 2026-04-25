@@ -51,13 +51,15 @@ var ErrPull = fmt.Errorf("agent pull error")
 
 // workspace holds everything needed to materialize an agent workspace.
 type workspace struct {
-	store         oras.ReadOnlyTarget
-	ref           spec.Reference
-	overrides     []spec.Override
-	ociPuller     agentoci.Puller
-	modelResolver model.Resolver
-	localRuntime  string
-	mounts        []Mount
+	store          oras.ReadOnlyTarget
+	ref            spec.Reference
+	overrides      []spec.Override
+	ociPuller      agentoci.Puller
+	modelResolver  model.Resolver
+	digestResolver DigestResolver
+	imageRef       string
+	localRuntime   string
+	mounts         []Mount
 	// hostFS is a non-chrooted filesystem used for operations on real
 	// host paths: the mount symlink target, the local-runtime source
 	// file. NewAgent defaults to osfs.New("/"); tests substitute memfs.
@@ -126,7 +128,17 @@ func (w *workspace) materialize(
 			Name:        t.Name,
 			Description: t.Description,
 			Binary:      filepath.Join(binDir, t.Name),
+			Ref:         t.Image,
+			Digest:      w.resolveDigest(t.Image),
 		})
+	}
+
+	if w.imageRef != "" || af.Agent.Runtime != "" {
+		rt.Provenance = &agent.Provenance{
+			ImageDigest:   w.resolveDigest(w.imageRef),
+			RuntimeRef:    af.Agent.Runtime,
+			RuntimeDigest: w.resolveDigest(af.Agent.Runtime),
+		}
 	}
 
 	if e := rt.WriteTo(fs); e != nil {
@@ -190,6 +202,17 @@ func workspaceContextMarkdown(root string) []byte {
 // LLM otherwise has no idea what "its" filesystem looks like when a
 // tool like `ls` or `pwd` is invoked — and without this note it'll
 // happily `ls /` and see the host root.
+// resolveDigest is the safe-call shim around the optional
+// DigestResolver: nil resolver and empty refs both return "" without
+// panicking, so the caller can ignore best-effort lookups.
+func (w *workspace) resolveDigest(ref string) string {
+	if w.digestResolver == nil || ref == "" {
+		return ""
+	}
+
+	return w.digestResolver(ref)
+}
+
 func (w *workspace) writeWorkspaceContext(fs billy.Filesystem) error {
 	return util.WriteFile(fs, filepath.Join(contextDir, "WORKSPACE.md"),
 		workspaceContextMarkdown(fs.Root()), 0o644)

@@ -25,20 +25,37 @@ type AgentRuntime struct {
 
 // ResolvedConfig holds the merged configuration after applying spec overrides.
 type ResolvedConfig struct {
-	Name    string         `yaml:"name" json:"name"`
-	Model   string         `yaml:"model" json:"model"`
-	Addr    string         `yaml:"addr,omitempty" json:"addr,omitempty"`
-	APIBase string         `yaml:"api_base,omitempty" json:"api_base,omitempty"`
-	APIKey  string         `yaml:"api_key,omitempty" json:"api_key,omitempty"`
-	Exec    []string       `yaml:"exec,omitempty" json:"exec,omitempty"`
-	Tools   []ResolvedTool `yaml:"tools,omitempty" json:"tools,omitempty"`
+	Name       string         `yaml:"name" json:"name"`
+	Model      string         `yaml:"model" json:"model"`
+	Addr       string         `yaml:"addr,omitempty" json:"addr,omitempty"`
+	APIBase    string         `yaml:"api_base,omitempty" json:"api_base,omitempty"`
+	APIKey     string         `yaml:"api_key,omitempty" json:"api_key,omitempty"`
+	Exec       []string       `yaml:"exec,omitempty" json:"exec,omitempty"`
+	Provenance *Provenance    `yaml:"provenance,omitempty" json:"provenance,omitempty"`
+	Tools      []ResolvedTool `yaml:"tools,omitempty" json:"tools,omitempty"`
 }
 
-// ResolvedTool describes a tool binary with its resolved filesystem path.
+// Provenance records the OCI digests of the artifacts that materialise
+// an agent: the agent image itself, the runtime image it executes
+// against, and the BIN tool images per ResolvedTool. Optional —
+// populated only when the workspace is given a digest resolver
+// (today: the openotters daemon's local registry resolver). Lets a
+// host operator answer "exactly which bytes is this agent running?"
+// without re-querying any registry.
+type Provenance struct {
+	ImageDigest   string `yaml:"image_digest,omitempty" json:"image_digest,omitempty"`
+	RuntimeRef    string `yaml:"runtime_ref,omitempty" json:"runtime_ref,omitempty"`
+	RuntimeDigest string `yaml:"runtime_digest,omitempty" json:"runtime_digest,omitempty"`
+}
+
+// ResolvedTool describes a tool binary with its resolved filesystem
+// path plus, when known, its source ref and OCI digest.
 type ResolvedTool struct {
 	Name        string `yaml:"name" json:"name"`
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 	Binary      string `yaml:"binary" json:"binary"`
+	Ref         string `yaml:"ref,omitempty" json:"ref,omitempty"`
+	Digest      string `yaml:"digest,omitempty" json:"digest,omitempty"`
 }
 
 // WriteTo serializes the runtime to the given filesystem as YAML.
