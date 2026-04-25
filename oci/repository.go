@@ -5,6 +5,7 @@ package oci
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 
 	"oras.land/oras-go/v2/registry/remote"
@@ -45,9 +46,35 @@ func NewRemoteRepository(ref spec.Reference, opts ...RemoteRepositoryOption) (*r
 		Credential: credentials.Credential(credStore),
 	}
 
+	// Mirror Docker's default-resolver behavior: loopback hosts speak
+	// HTTP. Caller-supplied opts run after, so explicit choices win.
+	if isLoopbackHost(repo.Reference.Registry) {
+		repo.PlainHTTP = true
+	}
+
 	for _, opt := range opts {
 		opt(repo)
 	}
 
 	return repo, nil
+}
+
+// isLoopbackHost reports whether the given "host" or "host:port"
+// string targets the local loopback. Matches Docker/containerd: the
+// literal "localhost", anything in 127.0.0.0/8, and ::1.
+func isLoopbackHost(hostport string) bool {
+	host, _, err := net.SplitHostPort(hostport)
+	if err != nil {
+		host = hostport
+	}
+
+	if host == "localhost" {
+		return true
+	}
+
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+
+	return false
 }
