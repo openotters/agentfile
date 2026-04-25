@@ -4,6 +4,7 @@ go 1.26.2
 
 require (
 	github.com/alecthomas/participle/v2 v2.1.4
+	github.com/cenkalti/backoff/v5 v5.0.3
 	github.com/go-git/go-billy/v6 v6.0.0-20260328065524-593ae452e14d
 	github.com/google/uuid v1.6.0
 	github.com/opencontainers/go-digest v1.0.0

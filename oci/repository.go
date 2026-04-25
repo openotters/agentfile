@@ -5,6 +5,7 @@ package oci
 
 import (
 	"fmt"
+	"net/http"
 
 	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/auth"
@@ -22,8 +23,12 @@ func WithPlainHTTP(repo *remote.Repository) {
 	repo.PlainHTTP = true
 }
 
-// NewRemoteRepository constructs an oras remote.Repository bound to ref,
-// wired up with Docker credential resolution.
+// NewRemoteRepository constructs an oras remote.Repository bound to
+// ref, wired up with Docker credential resolution and a retrying
+// transport that tolerates transient 5xx + transport errors. The
+// retry is what lets the first-ever push of a brand-new GHCR package
+// succeed: GHCR provisions backend storage on the first manifest PUT
+// and the request can race the provisioning step.
 func NewRemoteRepository(ref spec.Reference, opts ...RemoteRepositoryOption) (*remote.Repository, error) {
 	repo, err := remote.NewRepository(ref.String())
 	if err != nil {
@@ -35,7 +40,10 @@ func NewRemoteRepository(ref spec.Reference, opts ...RemoteRepositoryOption) (*r
 		return nil, fmt.Errorf("loading credentials: %w", err)
 	}
 
-	repo.Client = &auth.Client{Credential: credentials.Credential(credStore)}
+	repo.Client = &auth.Client{
+		Client:     &http.Client{Transport: withRetry(http.DefaultTransport)},
+		Credential: credentials.Credential(credStore),
+	}
 
 	for _, opt := range opts {
 		opt(repo)
