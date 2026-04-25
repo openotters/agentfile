@@ -62,6 +62,50 @@ func (r Reference) String() string {
 	return r.Name + ":" + tag
 }
 
+// IsQualified reports whether name carries a registry-host component.
+// Heuristic matches containerd / docker reference parsers: the first
+// slash-separated segment is a host when it contains "." (a TLD) or
+// ":" (a port), or equals "localhost". Bare names like "foo" or
+// "agents/foo" are unqualified — a caller with a default registry
+// fills the host in via QualifyWithDefault.
+//
+// Accepts either a bare name ("agents/foo") or a full reference
+// string ("agents/foo:v1") — the trailing tag, if any, is stripped
+// before the host-detection runs so callers don't need to ParseReference
+// first.
+func IsQualified(name string) bool {
+	// Drop the trailing ":tag" using the same precedence rule as
+	// ParseReference: the tag separator is the last colon after the
+	// last slash (or anywhere in the string when there's no slash).
+	parsed := ParseReference(name)
+
+	first := parsed.Name
+	if i := strings.Index(parsed.Name, "/"); i >= 0 {
+		first = parsed.Name[:i]
+	}
+
+	if first == "localhost" {
+		return true
+	}
+
+	return strings.ContainsAny(first, ".:")
+}
+
+// QualifyWithDefault returns ref with defaultRegistry prepended to its
+// Name iff Name isn't already qualified. defaultRegistry should not
+// include a scheme or trailing slash; an empty defaultRegistry is a
+// no-op (callers without a default fall back to the unmodified ref).
+func QualifyWithDefault(ref Reference, defaultRegistry string) Reference {
+	if defaultRegistry == "" || IsQualified(ref.Name) {
+		return ref
+	}
+
+	return Reference{
+		Name: defaultRegistry + "/" + ref.Name,
+		Tag:  ref.Tag,
+	}
+}
+
 // Validate checks that the reference has at least a name.
 func (r Reference) Validate() error {
 	if r.Name == "" {
