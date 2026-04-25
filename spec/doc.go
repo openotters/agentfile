@@ -1,4 +1,4 @@
-// Package parse reads Agentfiles into structured [Agentfile] values.
+// Package spec reads Agentfiles into structured [Agentfile] values.
 //
 // Parsing is a two-phase process: a line scanner handles comments, heredocs,
 // and ARG expansion, then each instruction line is parsed by a participle v2

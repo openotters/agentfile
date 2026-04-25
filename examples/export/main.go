@@ -2,7 +2,7 @@
 //
 // Usage:
 //
-//	go run ./examples/agentfile/export/ <path-to-Agentfile> <output.json>
+//	go run ./examples/export/ <path-to-Agentfile> <output.json>
 package main
 
 import (
@@ -12,10 +12,11 @@ import (
 	"path/filepath"
 
 	"github.com/go-git/go-billy/v6/osfs"
+	"oras.land/oras-go/v2/content/memory"
+
 	"github.com/openotters/agentfile/build"
 	"github.com/openotters/agentfile/export"
 	"github.com/openotters/agentfile/spec"
-	"oras.land/oras-go/v2/content/memory"
 )
 
 func main() {
@@ -37,13 +38,13 @@ func main() {
 
 	store := memory.New()
 
-	digest, err := build.Build(context.Background(), af, osfs.New(srcDir), store)
+	ref, err := build.Build(context.Background(), af, osfs.New(srcDir), store)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 
-	data, err := export.Export(store)
+	data, err := export.Export(context.Background(), store, ref.Reference)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -54,5 +55,5 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("exported %s → %s (%d bytes)\n", digest, output, len(data))
+	fmt.Printf("exported %s → %s (%d bytes)\n", ref, output, len(data))
 }

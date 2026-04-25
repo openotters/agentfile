@@ -2,7 +2,7 @@
 //
 // Usage:
 //
-//	go run ./examples/agentfile/parse/ <path-to-Agentfile>
+//	go run ./examples/parse/ <path-to-Agentfile>
 package main
 
 import (

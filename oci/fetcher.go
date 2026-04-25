@@ -4,17 +4,18 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/openotters/agentfile/spec"
-	afstore "github.com/openotters/agentfile/store"
 	"oras.land/oras-go/v2"
 	"oras.land/oras-go/v2/content/memory"
+
+	"github.com/openotters/agentfile/spec"
+	afstore "github.com/openotters/agentfile/store"
 )
 
-const defaultTag = "latest"
-
 // AgentFetcher returns a resolve.Fetcher that pulls agent artifacts from OCI registries.
-func AgentFetcher(opts ...RemoteRepositoryOption) func(ctx context.Context, ref string) (*spec.Agentfile, error) {
-	return func(ctx context.Context, ref string) (*spec.Agentfile, error) {
+func AgentFetcher(
+	opts ...RemoteRepositoryOption,
+) func(ctx context.Context, ref spec.Reference) (*spec.Agentfile, error) {
+	return func(ctx context.Context, ref spec.Reference) (*spec.Agentfile, error) {
 		repo, err := NewRemoteRepository(ref, opts...)
 		if err != nil {
 			return nil, err
@@ -22,7 +23,7 @@ func AgentFetcher(opts ...RemoteRepositoryOption) func(ctx context.Context, ref 
 
 		tag := repo.Reference.Reference
 		if tag == "" {
-			tag = defaultTag
+			tag = spec.DefaultTag
 		}
 
 		store := memory.New()
@@ -32,12 +33,12 @@ func AgentFetcher(opts ...RemoteRepositoryOption) func(ctx context.Context, ref 
 			return nil, fmt.Errorf("pulling %s: %w", ref, err)
 		}
 
-		if tag != defaultTag {
-			if tagErr := store.Tag(ctx, desc, defaultTag); tagErr != nil {
+		if tag != spec.DefaultTag {
+			if tagErr := store.Tag(ctx, desc, spec.DefaultTag); tagErr != nil {
 				return nil, tagErr
 			}
 		}
 
-		return afstore.LoadWithLayers(store, defaultTag)
+		return afstore.LoadHydrated(ctx, store, spec.ParseReference(spec.DefaultTag))
 	}
 }

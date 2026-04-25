@@ -25,7 +25,7 @@ import (
 const maxDepth = 10
 
 // Fetcher pulls a parent agent artifact by OCI reference and returns the parsed Agentfile.
-type Fetcher func(ctx context.Context, ref string) (*spec.Agentfile, error)
+type Fetcher func(ctx context.Context, ref spec.Reference) (*spec.Agentfile, error)
 
 // Resolve resolves FROM inheritance. If af.Agent.From is "scratch", the Agentfile is
 // returned as-is. Otherwise, the parent is fetched, recursively resolved, and merged.
@@ -42,7 +42,7 @@ func resolveDepth(ctx context.Context, af *spec.Agentfile, fetch Fetcher, depth 
 		return af, nil
 	}
 
-	parent, err := fetch(ctx, af.Agent.From)
+	parent, err := fetch(ctx, spec.ParseReference(af.Agent.From))
 	if err != nil {
 		return nil, fmt.Errorf("pulling parent %s: %w", af.Agent.From, err)
 	}

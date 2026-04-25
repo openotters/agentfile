@@ -58,12 +58,12 @@ func TestExportImport_Roundtrip(t *testing.T) {
 
 	store := memory.New()
 
-	buildDigest, err := build.Build(context.Background(), af, src, store)
+	buildRef, err := build.Build(context.Background(), af, src, store)
 	if err != nil {
 		t.Fatalf("build error: %v", err)
 	}
 
-	exported, err := export.Export(store)
+	exported, err := export.Export(context.Background(), store, buildRef.Reference)
 	if err != nil {
 		t.Fatalf("export error: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestExportImport_Roundtrip(t *testing.T) {
 		t.Fatal("exported data is empty")
 	}
 
-	importedStore, digest, err := export.Import(exported)
+	importedStore, digest, err := export.Import(context.Background(), exported)
 	if err != nil {
 		t.Fatalf("import error: %v", err)
 	}
@@ -81,16 +81,16 @@ func TestExportImport_Roundtrip(t *testing.T) {
 		t.Error("import returned empty digest")
 	}
 
-	if digest != buildDigest.String() {
-		t.Errorf("digest mismatch: build=%s import=%s", buildDigest, digest)
+	if digest != buildRef.Digest.String() {
+		t.Errorf("digest mismatch: build=%s import=%s", buildRef.Digest, digest)
 	}
 
-	desc, err := importedStore.Resolve(context.Background(), "latest")
+	desc, err := importedStore.Resolve(context.Background(), digest)
 	if err != nil {
-		t.Fatalf("resolving latest from imported store: %v", err)
+		t.Fatalf("resolving digest from imported store: %v", err)
 	}
 
-	if desc.Digest.String() != buildDigest.String() {
-		t.Errorf("store digest = %s, want %s", desc.Digest.String(), buildDigest)
+	if desc.Digest.String() != buildRef.Digest.String() {
+		t.Errorf("store digest = %s, want %s", desc.Digest.String(), buildRef.Digest)
 	}
 }

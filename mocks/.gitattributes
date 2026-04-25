@@ -1,0 +1,4 @@
+# Everything in mocks/ is mockery-generated. Marking as generated so
+# GitHub PR diffs collapse them and language-stats skip them.
+# Regenerate with `task mocks:generate`.
+*.go linguist-generated=true

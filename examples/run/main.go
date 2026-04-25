@@ -1,13 +1,5 @@
-// Run parses an Agentfile, builds the OCI artifact in memory, materializes the agent
-// filesystem using the FileExecutor (including the runtime binary from the RUNTIME OCI
-// image), and starts the runtime.
-//
-// This demonstrates the full local pipeline:
-//
-//	parse → build (memory store) → execute (FileExecutor) → spawn runtime
-//
-// The executor writes etc/agent.yaml (spec-level config) with tool definitions, model,
-// and agent name. The runtime reads it automatically from the root directory.
+// Run parses an Agentfile, materializes the agent workspace, and starts
+// the runtime. Blocks until interrupted.
 //
 // Usage:
 //
@@ -16,19 +8,24 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
-	osExec "os/exec"
-	"path/filepath"
+	"os/signal"
 
+	"github.com/go-git/go-billy/v6/osfs"
+	"github.com/google/uuid"
+	"oras.land/oras-go/v2/content/memory"
+
+	"github.com/openotters/agentfile/agent/system"
 	"github.com/openotters/agentfile/build"
-	"github.com/openotters/agentfile/executor"
 	"github.com/openotters/agentfile/oci"
+	"github.com/openotters/agentfile/spec"
 )
 
 func main() {
-	runtimeOverride := flag.String("runtime", "", "override runtime binary path (skip OCI pull)")
+	runtimeFlag := flag.String("runtime", "", "override runtime binary path (skip OCI pull)")
 	modelFlag := flag.String("model", "", "override model (provider/model)")
 	apiKeyFlag := flag.String("api-key", "", "API key for the LLM provider")
 	apiBaseFlag := flag.String("api-base", "", "custom API base URL")
@@ -42,56 +39,48 @@ func main() {
 	}
 
 	agentfilePath := args[0]
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
 
-	af, store, _, err := build.FromFile(context.Background(), agentfilePath)
+	if *apiBaseFlag == "" {
+		fatal(errors.New("must specify --api-base"))
+	}
+
+	store := memory.New()
+
+	ref, err := build.FromFile(ctx, agentfilePath, store)
 	if err != nil {
 		fatal(err)
+	}
+
+	root, err := osfs.New(os.TempDir()).Chroot("agentfile")
+	if err != nil {
+		fatal(err)
+	}
+
+	agentRoot, err := root.Chroot(uuid.New().String())
+	if err != nil {
+		fatal(err)
+	}
+
+	opts := []system.AgentOption{
+		system.WithStore(store),
+		system.WithReference(ref.Reference),
+		system.WithStaticModelResolver(*apiBaseFlag, *apiKeyFlag),
+	}
+
+	if *runtimeFlag != "" {
+		opts = append(opts, system.WithAgentLocalRuntime(*runtimeFlag), system.WithAgentPuller(oci.NoopPuller()))
 	}
 
 	if *modelFlag != "" {
-		af.Agent.Model = *modelFlag
+		opts = append(opts, system.WithOverrides(spec.WithModel(*modelFlag)))
 	}
 
-	root, err := os.MkdirTemp("", "agentfile-*")
-	if err != nil {
+	a := system.NewAgent(uuid.New(), agentRoot, opts...)
+
+	if err := a.Run(ctx); err != nil {
 		fatal(err)
-	}
-	defer os.RemoveAll(root) //nolint:errcheck
-
-	e := executor.NewFileExecutor(root)
-	e.BinPuller = oci.RemotePuller()
-
-	result, err := e.Execute(context.Background(), store, "latest")
-	if err != nil {
-		fatal(err)
-	}
-
-	runtimeBin := filepath.Join(root, result.RuntimeBin)
-	if *runtimeOverride != "" {
-		runtimeBin = *runtimeOverride
-	}
-
-	serveArgs := []string{"serve", "--root", root}
-
-	if *apiKeyFlag != "" {
-		serveArgs = append(serveArgs, "--api-key", *apiKeyFlag)
-	}
-
-	if *apiBaseFlag != "" {
-		serveArgs = append(serveArgs, "--api-base", *apiBaseFlag)
-	}
-
-	cmd := osExec.CommandContext(context.Background(), runtimeBin, serveArgs...) //nolint:gosec
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if runErr := cmd.Run(); runErr != nil {
-		if exitErr, ok := runErr.(*osExec.ExitError); ok {
-			os.Exit(exitErr.ExitCode())
-		}
-
-		fatal(runErr)
 	}
 }
 

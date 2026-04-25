@@ -11,15 +11,21 @@ import (
 
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/content"
+
+	"github.com/openotters/agentfile/spec"
 )
 
-func NoopPuller(_ context.Context, _ string, w io.Writer) error {
-	_, err := w.Write([]byte("#!/bin/sh\n"))
-	return err
+type Puller func(ctx context.Context, ref spec.Reference, w io.Writer) error
+
+func NoopPuller() Puller {
+	return func(_ context.Context, _ spec.Reference, w io.Writer) error {
+		_, err := w.Write([]byte("#!/bin/sh\n"))
+		return err
+	}
 }
 
-func RemotePuller(opts ...RemoteRepositoryOption) func(ctx context.Context, ref string, w io.Writer) error {
-	return func(ctx context.Context, ref string, w io.Writer) error {
+func RemotePuller(opts ...RemoteRepositoryOption) Puller {
+	return func(ctx context.Context, ref spec.Reference, w io.Writer) error {
 		repo, err := NewRemoteRepository(ref, opts...)
 		if err != nil {
 			return err
@@ -45,8 +51,8 @@ func RemotePuller(opts ...RemoteRepositoryOption) func(ctx context.Context, ref 
 }
 
 func extractBin(ctx context.Context, fetcher content.Fetcher, manifest v1.Manifest, w io.Writer) error {
-	name := manifest.Annotations["vnd.openotters.bin.name"]
-	binPath := manifest.Annotations["vnd.openotters.bin.path"]
+	name := manifest.Annotations[spec.AnnotationBinName]
+	binPath := manifest.Annotations[spec.AnnotationBinPath]
 	if binPath != "" && name != "" {
 		binPath = filepath.Join(binPath, name)
 	}

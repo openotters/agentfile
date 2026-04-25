@@ -1,3 +1,12 @@
+// Package store reads OCI manifests and Agentfiles out of oras targets.
+// Two entry points:
+//
+//   - Load returns the raw manifest and parsed Agentfile.
+//   - LoadHydrated additionally pulls every layer and populates
+//     Agentfile.Agent.Contexts[*].Content and Agent.Adds[*].Content, so the
+//     returned value is self-contained (used when a parent agentfile is
+//     consumed by a child build that has no access to the parent's source
+//     filesystem).
 package store
 
 import (
@@ -8,22 +17,50 @@ import (
 	"strings"
 
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+	"oras.land/oras-go/v2"
+
 	"github.com/openotters/agentfile/spec"
-	"oras.land/oras-go/v2/content/memory"
 )
 
-// Load resolves a manifest by ref and deserializes the Agentfile from the config blob.
-func Load(s *memory.Store, ref string) (*spec.Agentfile, error) {
-	_, af, err := loadManifestAndConfig(s, ref)
-	return af, err
+// Load resolves ref in s and returns the raw manifest and parsed Agentfile.
+// Layer contents (Context.Content, Add.Content) are not hydrated; use
+// LoadHydrated when callers need those fields populated.
+func Load(ctx context.Context, s oras.ReadOnlyTarget, ref spec.Reference) (*v1.Manifest, *spec.Agentfile, error) {
+	desc, err := s.Resolve(ctx, ref.String())
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolving manifest: %w", err)
+	}
+
+	manifestData, err := fetchBytes(ctx, s, desc)
+	if err != nil {
+		return nil, nil, fmt.Errorf("fetching manifest: %w", err)
+	}
+
+	var manifest v1.Manifest
+	if err = json.Unmarshal(manifestData, &manifest); err != nil {
+		return nil, nil, fmt.Errorf("parsing manifest: %w", err)
+	}
+
+	configData, err := fetchBytes(ctx, s, manifest.Config)
+	if err != nil {
+		return nil, nil, fmt.Errorf("fetching config: %w", err)
+	}
+
+	var af spec.Agentfile
+	if err = json.Unmarshal(configData, &af); err != nil {
+		return nil, nil, fmt.Errorf("parsing agentfile: %w", err)
+	}
+
+	return &manifest, &af, nil
 }
 
-// LoadWithLayers loads the Agentfile and hydrates Add.Content and Context.Content
-// from the OCI layers. This is needed for FROM inheritance: the parent's contexts
-// and data files are embedded in the returned Agentfile so that a child build
-// doesn't need access to the parent's source filesystem.
-func LoadWithLayers(s *memory.Store, ref string) (*spec.Agentfile, error) {
-	manifest, af, err := loadManifestAndConfig(s, ref)
+// LoadHydrated loads ref and additionally pulls every layer, populating
+// Agentfile.Agent.Contexts[*].Content and Agent.Adds[*].Content so the
+// returned Agentfile is self-contained. Needed for FROM inheritance: a
+// child build consumes a parent Agentfile without access to the parent's
+// source filesystem.
+func LoadHydrated(ctx context.Context, s oras.ReadOnlyTarget, ref spec.Reference) (*spec.Agentfile, error) {
+	manifest, af, err := Load(ctx, s, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -31,8 +68,6 @@ func LoadWithLayers(s *memory.Store, ref string) (*spec.Agentfile, error) {
 	if af.Agent == nil {
 		return af, nil
 	}
-
-	ctx := context.Background()
 
 	contextData := make(map[string][]byte)
 	addData := make(map[string][]byte)
@@ -75,38 +110,7 @@ func LoadWithLayers(s *memory.Store, ref string) (*spec.Agentfile, error) {
 	return af, nil
 }
 
-func loadManifestAndConfig(s *memory.Store, ref string) (*v1.Manifest, *spec.Agentfile, error) {
-	ctx := context.Background()
-
-	desc, err := s.Resolve(ctx, ref)
-	if err != nil {
-		return nil, nil, fmt.Errorf("resolving manifest: %w", err)
-	}
-
-	manifestData, err := fetchBytes(ctx, s, desc)
-	if err != nil {
-		return nil, nil, fmt.Errorf("fetching manifest: %w", err)
-	}
-
-	var manifest v1.Manifest
-	if err = json.Unmarshal(manifestData, &manifest); err != nil {
-		return nil, nil, fmt.Errorf("parsing manifest: %w", err)
-	}
-
-	configData, err := fetchBytes(ctx, s, manifest.Config)
-	if err != nil {
-		return nil, nil, fmt.Errorf("fetching config: %w", err)
-	}
-
-	var af spec.Agentfile
-	if err = json.Unmarshal(configData, &af); err != nil {
-		return nil, nil, fmt.Errorf("parsing agentfile: %w", err)
-	}
-
-	return &manifest, &af, nil
-}
-
-func fetchBytes(ctx context.Context, s *memory.Store, desc v1.Descriptor) ([]byte, error) {
+func fetchBytes(ctx context.Context, s oras.ReadOnlyTarget, desc v1.Descriptor) ([]byte, error) {
 	rc, err := s.Fetch(ctx, desc)
 	if err != nil {
 		return nil, err

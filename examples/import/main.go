@@ -15,9 +15,11 @@ import (
 	"fmt"
 	"os"
 
+	"oras.land/oras-go/v2"
+
 	"github.com/openotters/agentfile/export"
 	"github.com/openotters/agentfile/oci"
-	"oras.land/oras-go/v2"
+	"github.com/openotters/agentfile/spec"
 )
 
 func main() {
@@ -36,7 +38,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	store, digest, err := export.Import(data)
+	store, digest, err := export.Import(context.Background(), data)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -45,7 +47,7 @@ func main() {
 	fmt.Printf("imported %s\n", digest)
 
 	if len(args) >= 2 {
-		ref := args[1]
+		ref := spec.ParseReference(args[1])
 
 		var opts []oci.RemoteRepositoryOption
 		if *plainHTTP {
@@ -58,9 +60,9 @@ func main() {
 			os.Exit(1)
 		}
 
-		tag := "latest"
-		if t := oci.ParseTag(ref); t != "" {
-			tag = t
+		tag := ref.Tag
+		if tag == "" {
+			tag = spec.DefaultTag
 		}
 
 		if _, copyErr := oras.Copy(context.Background(), store, "latest", repo, tag, oras.DefaultCopyOptions); copyErr != nil {

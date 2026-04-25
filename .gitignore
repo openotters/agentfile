@@ -360,3 +360,7 @@ $RECYCLE.BIN/
 *.lnk
 
 .claude
+### Local additions (stray build artifacts at repo root) ###
+/pool
+/prompt
+/run

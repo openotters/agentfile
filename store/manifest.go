@@ -6,14 +6,15 @@ import (
 	"fmt"
 
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+	"oras.land/oras-go/v2"
 	"oras.land/oras-go/v2/content/memory"
+
+	"github.com/openotters/agentfile/spec"
 )
 
 // Manifest resolves and returns the OCI manifest from a store by ref (e.g. "latest", "v1.0").
-func Manifest(store *memory.Store, ref string) (*v1.Manifest, error) {
-	ctx := context.Background()
-
-	desc, err := store.Resolve(ctx, ref)
+func Manifest(ctx context.Context, store *memory.Store, ref spec.Reference) (*v1.Manifest, error) {
+	desc, err := store.Resolve(ctx, ref.String())
 	if err != nil {
 		return nil, fmt.Errorf("resolving manifest: %w", err)
 	}
@@ -45,6 +46,6 @@ func Layers(manifest *v1.Manifest, mediaType string) []v1.Descriptor {
 }
 
 // FetchLayer fetches a layer's content by descriptor from a store.
-func FetchLayer(store *memory.Store, desc v1.Descriptor) ([]byte, error) {
-	return fetchBytes(context.Background(), store, desc)
+func FetchLayer(ctx context.Context, store oras.ReadOnlyTarget, desc v1.Descriptor) ([]byte, error) {
+	return fetchBytes(ctx, store, desc)
 }

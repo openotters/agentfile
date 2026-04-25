@@ -1,0 +1,96 @@
+name: test
+
+# Runs `go test -race -cover` on every PR and push to main, then
+# enforces a coverage floor on the public-API packages (spec, build,
+# resolve, export, oci, store, validate, model, agent, agent/system).
+# Excluded from the floor:
+#   - agent/api/v1  — protoc-generated; conventionally skipped.
+#   - examples/*    — runnable demos, no production callers.
+#   - internal/*    — not part of the public API; private helpers.
+#   - mocks/*       — mockery-generated; testing the mock generator's
+#                     output is mockery's job, not ours.
+#
+# agent/system used to live in this list alongside agent/api/v1 while
+# its subprocess + gRPC-client layers were untestable. The
+# Executor / LoopbackAllocator / HostFS / Dialer seams unblocked that;
+# the package now sits at ~66% and counts toward the global floor.
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        go: ['1.26']
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          cache: true
+
+      - name: Verify generated mocks are in sync
+        # Regenerates mocks from .mockery.yaml and fails if git sees a
+        # diff — catches PRs that changed an interface without running
+        # `task mocks:generate`. Only needs to run on one OS since
+        # mockery output is deterministic across platforms.
+        # `go mod download` must run first so mockery's package loader
+        # can resolve transitive deps (e.g. google.golang.org/grpc).
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          go mod download
+          go run github.com/vektra/mockery/v3@latest
+          git diff --exit-code -- mocks
+
+      - name: Run tests with race detector + coverage
+        run: |
+          go test -race -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Compute coverage on public-API packages
+        id: cov
+        # On macOS `grep -v` exits 1 when nothing matches the inverted
+        # pattern for the "mode:" header line, which would fail the
+        # workflow. Use an explicit awk filter instead.
+        run: |
+          awk 'NR==1 || !/agent\/api\/v1|examples\/|\/internal|\/mocks\//' \
+            coverage.out > coverage.core.out
+          total=$(go tool cover -func=coverage.core.out | awk '/^total:/ {print $3}' | tr -d %)
+          echo "public API coverage: ${total}%"
+          echo "public_api=${total}" >> "$GITHUB_OUTPUT"
+
+      - name: Enforce coverage threshold
+        env:
+          # 75% reflects the post-seam state: every public-API
+          # package is in scope, agent/system included. The
+          # lifecycle methods (Run / Start / Stop / Remove /
+          # initialize) still need integration-level tests — that
+          # work is what pushes the floor upward.
+          THRESHOLD: '75'
+          ACTUAL: ${{ steps.cov.outputs.public_api }}
+        run: |
+          awk -v a="$ACTUAL" -v t="$THRESHOLD" 'BEGIN {
+            if (a+0 < t+0) {
+              printf "public-API coverage %s%% is below the %s%% threshold\n", a, t
+              exit 1
+            }
+            printf "public-API coverage %s%% meets the %s%% threshold\n", a, t
+          }'
+
+      - name: Upload coverage artifact
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: |
+            coverage.out
+            coverage.core.out
+          retention-days: 7

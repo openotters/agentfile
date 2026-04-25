@@ -7,17 +7,20 @@ import (
 	"runtime"
 
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
-	"oras.land/oras-go/v2/registry/remote"
+	"oras.land/oras-go/v2/content"
 )
 
-func ResolveManifest(ctx context.Context, repo *remote.Repository, desc v1.Descriptor) (*v1.Manifest, error) {
-	data, err := FetchBlobBytes(ctx, repo, desc)
+// ResolveManifest fetches the blob at desc and parses it as a v1.Manifest.
+// If the blob is a v1.Index, a platform-appropriate child manifest is
+// selected and resolved recursively.
+func ResolveManifest(ctx context.Context, fetcher content.Fetcher, desc v1.Descriptor) (*v1.Manifest, error) {
+	data, err := FetchBlobBytes(ctx, fetcher, desc)
 	if err != nil {
 		return nil, fmt.Errorf("fetching manifest: %w", err)
 	}
 
 	if platformDesc, ok := resolveIndex(data); ok {
-		return ResolveManifest(ctx, repo, platformDesc)
+		return ResolveManifest(ctx, fetcher, platformDesc)
 	}
 
 	var manifest v1.Manifest

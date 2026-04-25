@@ -96,8 +96,8 @@ ADD data/cities.json /data/workspace/cities.json
 		t.Fatalf("configs = %d, want 3", len(a.Configs))
 	}
 
-	if a.Configs[0].Key != "max-tokens" || a.Configs[0].Value != "1024" {
-		t.Errorf("config[0] = %s=%s", a.Configs[0].Key, a.Configs[0].Value)
+	if a.Configs[0].Key != "max-tokens" || a.Configs[0].Value != int64(1024) {
+		t.Errorf("config[0] = %s=%v", a.Configs[0].Key, a.Configs[0].Value)
 	}
 
 	if a.Configs[2].Key != "api-base" || !a.Configs[2].Required {
@@ -211,8 +211,8 @@ NAME test-${MODEL}
 		t.Fatalf("configs = %d, want 1", len(a.Configs))
 	}
 
-	if a.Configs[0].Value != "2048" {
-		t.Errorf("config max-tokens = %q, want 2048", a.Configs[0].Value)
+	if v, ok := a.Configs[0].Value.(int64); !ok || v != 2048 {
+		t.Errorf("config max-tokens = %v (%T), want int64(2048)", a.Configs[0].Value, a.Configs[0].Value)
 	}
 
 	if a.Name != "test-anthropic/claude-haiku-4-5-20251001" {
@@ -370,6 +370,170 @@ RUNTIME ghcr.io/openotters/runtime:latest
 
 	if len(af.Agent.Configs) != 0 {
 		t.Errorf("configs = %d, want 0 (RUNTIME should clear prior configs)", len(af.Agent.Configs))
+	}
+}
+
+func TestParse_Exec(t *testing.T) {
+	t.Parallel()
+
+	input := `FROM scratch
+EXEC ["serve", "--max-tokens", "1024"]
+`
+	af, err := spec.Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	if len(af.Agent.Exec) != 3 {
+		t.Fatalf("exec = %v, want 3 args", af.Agent.Exec)
+	}
+
+	if af.Agent.Exec[0] != "serve" {
+		t.Errorf("exec[0] = %q, want serve", af.Agent.Exec[0])
+	}
+
+	if af.Agent.Exec[1] != "--max-tokens" {
+		t.Errorf("exec[1] = %q, want --max-tokens", af.Agent.Exec[1])
+	}
+
+	if af.Agent.Exec[2] != "1024" {
+		t.Errorf("exec[2] = %q, want 1024", af.Agent.Exec[2])
+	}
+}
+
+func TestParse_ExecWithArgSubstitution(t *testing.T) {
+	t.Parallel()
+
+	input := `FROM scratch
+ARG MAX_TOKENS=2048
+EXEC ["serve", "--max-tokens", "${MAX_TOKENS}"]
+`
+	af, err := spec.Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	if len(af.Agent.Exec) != 3 {
+		t.Fatalf("exec = %v, want 3 args", af.Agent.Exec)
+	}
+
+	if af.Agent.Exec[2] != "2048" {
+		t.Errorf("exec[2] = %q, want 2048", af.Agent.Exec[2])
+	}
+}
+
+func TestParse_ExecSingleArg(t *testing.T) {
+	t.Parallel()
+
+	input := `FROM scratch
+EXEC ["serve"]
+`
+	af, err := spec.Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	if len(af.Agent.Exec) != 1 {
+		t.Fatalf("exec = %v, want 1 arg", af.Agent.Exec)
+	}
+
+	if af.Agent.Exec[0] != "serve" {
+		t.Errorf("exec[0] = %q, want serve", af.Agent.Exec[0])
+	}
+}
+
+func TestParse_ExecDefault(t *testing.T) {
+	t.Parallel()
+
+	input := `FROM scratch
+NAME test
+`
+	af, err := spec.Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	if len(af.Agent.Exec) != 0 {
+		t.Errorf("exec = %v, want empty (default applied by runtime, not parser)", af.Agent.Exec)
+	}
+}
+
+func TestParse_ExecOverrides(t *testing.T) {
+	t.Parallel()
+
+	input := `FROM scratch
+EXEC ["serve", "--v1"]
+EXEC ["serve", "--v2"]
+`
+	af, err := spec.Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	if len(af.Agent.Exec) != 2 {
+		t.Fatalf("exec = %v, want 2 args", af.Agent.Exec)
+	}
+
+	if af.Agent.Exec[1] != "--v2" {
+		t.Errorf("exec[1] = %q, want --v2 (last EXEC should win)", af.Agent.Exec[1])
+	}
+}
+
+func TestParse_ConfigTypedValues(t *testing.T) {
+	t.Parallel()
+
+	input := `FROM scratch
+CONFIG max-tokens=1024 "Integer value"
+CONFIG temperature=0.7 "Float value"
+CONFIG verbose=true "Boolean true"
+CONFIG stream=false "Boolean false"
+CONFIG strategy=summarize "String value"
+CONFIG greeting="hello world" "Quoted string"
+CONFIG port="8080" "Quoted number stays string"
+`
+	af, err := spec.Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	configs := af.Agent.Configs
+	if len(configs) != 7 {
+		t.Fatalf("configs = %d, want 7", len(configs))
+	}
+
+	// Integer
+	if v, ok := configs[0].Value.(int64); !ok || v != 1024 {
+		t.Errorf("max-tokens = %v (%T), want int64(1024)", configs[0].Value, configs[0].Value)
+	}
+
+	// Float
+	if v, ok := configs[1].Value.(float64); !ok || v != 0.7 {
+		t.Errorf("temperature = %v (%T), want float64(0.7)", configs[1].Value, configs[1].Value)
+	}
+
+	// Boolean true
+	if v, ok := configs[2].Value.(bool); !ok || v != true {
+		t.Errorf("verbose = %v (%T), want bool(true)", configs[2].Value, configs[2].Value)
+	}
+
+	// Boolean false
+	if v, ok := configs[3].Value.(bool); !ok || v != false {
+		t.Errorf("stream = %v (%T), want bool(false)", configs[3].Value, configs[3].Value)
+	}
+
+	// Unquoted string
+	if v, ok := configs[4].Value.(string); !ok || v != "summarize" {
+		t.Errorf("strategy = %v (%T), want string(summarize)", configs[4].Value, configs[4].Value)
+	}
+
+	// Quoted string (with spaces)
+	if v, ok := configs[5].Value.(string); !ok || v != "hello world" {
+		t.Errorf("greeting = %v (%T), want string(hello world)", configs[5].Value, configs[5].Value)
+	}
+
+	// Quoted number stays string
+	if v, ok := configs[6].Value.(string); !ok || v != "8080" {
+		t.Errorf("port = %v (%T), want string(8080)", configs[6].Value, configs[6].Value)
 	}
 }
 

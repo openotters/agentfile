@@ -1,6 +1,8 @@
 package validate_test
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -178,6 +180,34 @@ func TestValidateStruct_NilAgent(t *testing.T) {
 
 	if err := validate.Struct(&spec.Agentfile{}); err == nil {
 		t.Error("expected error for nil agent")
+	}
+}
+
+func TestValidateFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	ok := filepath.Join(dir, "good.agentfile")
+	if err := os.WriteFile(ok, []byte("FROM scratch\nNAME ok\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := validate.ValidateFile(ok); err != nil {
+		t.Fatalf("ValidateFile(ok) = %v, want nil", err)
+	}
+
+	bad := filepath.Join(dir, "bad.agentfile")
+	if err := os.WriteFile(bad, []byte("NAME missing-from\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := validate.ValidateFile(bad); err == nil {
+		t.Fatal("ValidateFile(bad) = nil, want error")
+	}
+
+	if err := validate.ValidateFile(filepath.Join(dir, "does-not-exist.agentfile")); err == nil {
+		t.Fatal("ValidateFile(missing) = nil, want error")
 	}
 }
 

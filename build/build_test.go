@@ -4,15 +4,16 @@ import (
 	"context"
 	"testing"
 
-	billy "github.com/go-git/go-billy/v6"
+	"github.com/go-git/go-billy/v6"
 	"github.com/go-git/go-billy/v6/memfs"
+	"oras.land/oras-go/v2"
+	"oras.land/oras-go/v2/content/memory"
+
 	"github.com/openotters/agentfile/build"
 	"github.com/openotters/agentfile/internal"
 	"github.com/openotters/agentfile/oci"
 	"github.com/openotters/agentfile/spec"
 	afstore "github.com/openotters/agentfile/store"
-	"oras.land/oras-go/v2"
-	"oras.land/oras-go/v2/content/memory"
 )
 
 func writeTestFile(fs billy.Filesystem, path string, content string) error {
@@ -87,7 +88,7 @@ func TestBuildPushPull_Roundtrip(t *testing.T) {
 	af, src := newTestAgentfile(t)
 	store := memory.New()
 
-	_, err := build.Build(context.Background(), af, src, store)
+	buildRef, err := build.Build(context.Background(), af, src, store)
 	if err != nil {
 		t.Fatalf("build error: %v", err)
 	}
@@ -95,15 +96,15 @@ func TestBuildPushPull_Roundtrip(t *testing.T) {
 	reg := internal.New()
 	defer reg.Close()
 
-	ref := reg.Host() + "/test/agent:v1"
+	ref := spec.ParseReference(reg.Host() + "/test/agent:v1")
 
 	repo, err := oci.NewRemoteRepository(ref, oci.WithPlainHTTP)
 	if err != nil {
 		t.Fatalf("repo error: %v", err)
 	}
 
-	// Push
-	_, err = oras.Copy(context.Background(), store, "latest", repo, "v1", oras.DefaultCopyOptions)
+	// Push using build digest as source ref
+	_, err = oras.Copy(context.Background(), store, buildRef.Digest.String(), repo, "v1", oras.DefaultCopyOptions)
 	if err != nil {
 		t.Fatalf("push error: %v", err)
 	}
@@ -116,11 +117,12 @@ func TestBuildPushPull_Roundtrip(t *testing.T) {
 		t.Fatalf("pull error: %v", err)
 	}
 
-	if tagErr := pulledStore.Tag(context.Background(), desc, "latest"); tagErr != nil {
+	// Tag with a proper reference so Load can find it.
+	if tagErr := pulledStore.Tag(context.Background(), desc, "roundtrip-test:v1"); tagErr != nil {
 		t.Fatalf("tag error: %v", tagErr)
 	}
 
-	pulled, err := afstore.Load(pulledStore, "latest")
+	_, pulled, err := afstore.Load(context.Background(), pulledStore, spec.ParseReference("roundtrip-test:v1"))
 	if err != nil {
 		t.Fatalf("load error: %v", err)
 	}

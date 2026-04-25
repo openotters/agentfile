@@ -1,0 +1,44 @@
+# mockery v3 config — regenerate with `task mocks:generate`
+#
+# Mocks live under mocks/<package>/ with one file per interface. We use
+# testify-mock with typed expecters (e.g.
+# Mock.EXPECT().Prompt(ctx, req, w).Return(nil)), which catches
+# wrong-type expectations at compile time instead of at assertion time.
+#
+# When a new interface is introduced, list it here and run `task
+# mocks:generate`. CI runs `task mocks:verify` which regenerates and
+# diffs — a PR that introduced an interface but forgot to add it here
+# won't fail, but a PR that changed an existing interface and forgot
+# to regenerate will.
+#
+# Intentionally skipped:
+#   - oci.Puller — function type, not an interface; mockery can't
+#     target function types. Tests use oci.NoopPuller or a bare
+#     closure.
+#   - agent/api/v1 protoc-generated AgentRuntime{Client,Server} — we
+#     use bufconn + the real generated server for Dialer tests
+#     (Seam 4 in the testability plan).
+
+template: testify
+
+dir: "mocks/{{.SrcPackageName}}"
+filename: "{{.InterfaceName | snakecase}}.go"
+pkgname: "mock{{.SrcPackageName}}"
+structname: "Mock{{.InterfaceName}}"
+
+packages:
+  github.com/openotters/agentfile/agent:
+    interfaces:
+      Agent:
+      Provider:
+      Prompter:
+      StreamPrompter:
+      ObjectPrompter:
+      SessionReader:
+      StatusObserver:
+  github.com/openotters/agentfile/agent/system:
+    interfaces:
+      LoopbackAllocator:
+      Executor:
+      Cmd:
+      Dialer:

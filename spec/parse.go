@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -77,12 +78,17 @@ func (p *parser) parse() (*Agentfile, error) {
 	}
 
 	if af.Syntax == "" {
-		af.Syntax = "openotters/agentfile:1"
+		af.Syntax = DefaultSyntax
 	}
 
 	return validate(af)
 }
 
+// applyInstruction is a long switch over the parsed instruction
+// variants. Splitting per-directive helpers would obscure the per-line
+// dispatch the parser runs.
+//
+//nolint:funlen // exhaustive directive switch
 func applyInstruction(agent *Agent, inst *instruction, heredoc string) {
 	switch {
 	case inst.From != nil:
@@ -126,8 +132,10 @@ func applyInstruction(agent *Agent, inst *instruction, heredoc string) {
 			Key:      inst.Config.Key,
 			Required: inst.Config.Required,
 		}
-		if inst.Config.Value != nil {
-			cfg.Value = *inst.Config.Value
+		if inst.Config.QuotedValue != nil {
+			cfg.Value = *inst.Config.QuotedValue // quoted = always string
+		} else if inst.Config.Value != nil {
+			cfg.Value = parseConfigValue(*inst.Config.Value) // unquoted = type-inferred
 		}
 		if inst.Config.Desc != nil {
 			cfg.Description = *inst.Config.Desc
@@ -159,6 +167,9 @@ func applyInstruction(agent *Agent, inst *instruction, heredoc string) {
 
 	case inst.Label != nil:
 		agent.Labels[inst.Label.Key] = inst.Label.Value
+
+	case inst.Exec != nil:
+		agent.Exec = inst.Exec.Args
 
 	case inst.Arg != nil:
 		if inst.Arg.Value != nil {
@@ -234,6 +245,8 @@ func instructionType(inst *instruction) string {
 		return "ADD"
 	case inst.Label != nil:
 		return "LABEL"
+	case inst.Exec != nil:
+		return "EXEC"
 	case inst.Arg != nil:
 		return "ARG"
 	default:
@@ -294,30 +307,68 @@ func expandArgs(s string, args map[string]string) string {
 	return s
 }
 
-func validate(af *Agentfile) (*Agentfile, error) {
-	if err := validateAgent(af.Agent); err != nil {
-		return nil, err
+// parseConfigValue interprets an unquoted config value as a YAML primitive.
+// Quoted values (containing spaces) are always strings.
+func parseConfigValue(s string) any {
+	// Boolean
+	if s == "true" {
+		return true
 	}
 
-	return af, nil
+	if s == "false" {
+		return false
+	}
+
+	// Integer (no dot, no leading zero except "0" itself)
+	if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return n
+	}
+
+	// Float
+	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		return f
+	}
+
+	// String
+	return s
 }
 
-func validateAgent(agent *Agent) error {
-	if agent.From == "" {
+// Validate checks structural invariants on a programmatically constructed
+// Agentfile: FROM is required, context name AGENT is reserved, and required
+// configs cannot carry a default value. Parse already runs Validate; callers
+// who build an Agentfile in code should call Validate themselves.
+func Validate(af *Agentfile) error {
+	if af == nil {
+		return fmt.Errorf("agentfile is nil")
+	}
+
+	if af.Agent == nil {
+		return fmt.Errorf("agent is nil")
+	}
+
+	if af.Agent.From == "" {
 		return fmt.Errorf("FROM is required")
 	}
 
-	for _, ctx := range agent.Contexts {
+	for _, ctx := range af.Agent.Contexts {
 		if ctx.Name == "AGENT" {
 			return fmt.Errorf("context name AGENT is reserved")
 		}
 	}
 
-	for _, cfg := range agent.Configs {
-		if cfg.Required && cfg.Value != "" {
+	for _, cfg := range af.Agent.Configs {
+		if cfg.Required && cfg.Value != nil {
 			return fmt.Errorf("config %s: required configs cannot have a default value", cfg.Key)
 		}
 	}
 
 	return nil
+}
+
+func validate(af *Agentfile) (*Agentfile, error) {
+	if err := Validate(af); err != nil {
+		return nil, err
+	}
+
+	return af, nil
 }

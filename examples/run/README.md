@@ -1,30 +1,43 @@
 # run
 
-Implementation example showing the full local agent pipeline:
-
-1. **Parse** the Agentfile (model, name, tools, runtime come from there)
-2. **Build** the OCI artifact into an in-memory store
-3. **Execute** with `FileExecutor` — materializes context files, data files, tool binaries, and the **runtime binary** (pulled from the `RUNTIME` OCI image following the bin spec) into a temp directory
-4. **Spawn** the runtime binary at `usr/local/bin/runtime`
-
-The executor is pluggable — this example uses `FileExecutor` (local filesystem), but the same `Executor` interface
-can be implemented for Docker, Kubernetes, or other targets.
+Parses an Agentfile, materializes the agent workspace into a temp chroot,
+pulls the runtime binary from its OCI ref (or reuses a local override),
+starts the runtime subprocess, and blocks until interrupted. The most
+end-to-end of the examples — if it works, your Agentfile + runtime + model
+endpoint are all wired up correctly.
 
 ## Usage
 
 ```sh
-go run ./examples/run/ [--api-key KEY] [--api-base URL] [--model MODEL] [--runtime <path>] <Agentfile>
+go run ./examples/run/ \
+  [--runtime <path>] [--model PROVIDER/MODEL] \
+  [--api-key KEY] --api-base URL \
+  <path-to-Agentfile>
 ```
 
-- `--model` overrides the `MODEL` instruction from the Agentfile.
-- `--runtime` overrides the runtime binary with a local path (skips OCI pull).
+| Flag          | Purpose                                                                 |
+|---------------|-------------------------------------------------------------------------|
+| `--runtime`   | Override the RUNTIME OCI ref with a local binary path (skips the pull). |
+| `--model`     | Override the Agentfile's `MODEL` directive.                             |
+| `--api-key`   | LLM provider API key (may also come from the provider's own env var).   |
+| `--api-base`  | **Required.** Base URL the runtime should dial for the LLM endpoint.    |
 
-## Example
+## Examples
 
 ```sh
-# Runtime pulled from the RUNTIME OCI image
-go run ./examples/run/ --api-key $ANTHROPIC_API_KEY demo/meteo/Agentfile
+# Local Ollama + a local runtime binary
+go run ./examples/run/ \
+  --runtime ./runtime \
+  --model ollama/qwen3:8b \
+  --api-base http://localhost:11434/v1 \
+  demo/meteo/Agentfile
 
-# Override with a local runtime binary
-go run ./examples/run/ --runtime ./openotters-runtime --api-key $ANTHROPIC_API_KEY demo/meteo/Agentfile
+# Anthropic, with the runtime pulled from its OCI ref
+go run ./examples/run/ \
+  --api-key "$ANTHROPIC_API_KEY" \
+  --api-base https://api.anthropic.com \
+  demo/meteo/Agentfile
 ```
+
+Press Ctrl-C to stop. The runtime subprocess is sent SIGINT and given a
+bounded drain period before exit.

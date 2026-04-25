@@ -5,13 +5,13 @@
 //
 // Usage:
 //
-//	go run ./examples/agentfile/pull/ <registry-ref>
-//	go run ./examples/agentfile/pull/ -plain-http <registry-ref>
+//	go run ./examples/pull/ <registry-ref>
+//	go run ./examples/pull/ -plain-http <registry-ref>
 //
 // Example:
 //
-//	go run ./examples/agentfile/pull/ ghcr.io/openotters/agents/meteo:1.0.0
-//	go run ./examples/agentfile/pull/ -plain-http localhost:5000/agents/meteo:1.0.0
+//	go run ./examples/pull/ ghcr.io/openotters/agents/meteo:1.0.0
+//	go run ./examples/pull/ -plain-http localhost:5000/agents/meteo:1.0.0
 package main
 
 import (
@@ -21,10 +21,12 @@ import (
 	"fmt"
 	"os"
 
-	afstore "github.com/openotters/agentfile/store"
-	"github.com/openotters/agentfile/oci"
 	"oras.land/oras-go/v2"
 	"oras.land/oras-go/v2/content/memory"
+
+	"github.com/openotters/agentfile/oci"
+	"github.com/openotters/agentfile/spec"
+	afstore "github.com/openotters/agentfile/store"
 )
 
 func main() {
@@ -37,7 +39,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	ref := args[0]
+	ref := spec.ParseReference(args[0])
+	ctx := context.Background()
 
 	var opts []oci.RemoteRepositoryOption
 	if *plainHTTP {
@@ -57,20 +60,20 @@ func main() {
 
 	store := memory.New()
 
-	desc, err := oras.Copy(context.Background(), repo, tag, store, tag, oras.DefaultCopyOptions)
+	desc, err := oras.Copy(ctx, repo, tag, store, tag, oras.DefaultCopyOptions)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 
 	if tag != "latest" {
-		if err := store.Tag(context.Background(), desc, "latest"); err != nil {
+		if err := store.Tag(ctx, desc, "latest"); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
 	}
 
-	af, err := afstore.Load(store, "latest")
+	_, af, err := afstore.Load(ctx, store, spec.ParseReference("latest"))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

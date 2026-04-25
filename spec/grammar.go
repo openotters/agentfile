@@ -14,7 +14,15 @@ var agentfileLexer = lexer.MustStateful(lexer.Rules{ //nolint:gochecknoglobals /
 		{Name: "FileRef", Pattern: `file://[^\s]+`},
 		{Name: "Equals", Pattern: `=`},
 		{Name: "Bang", Pattern: `!`},
+		{Name: "ExecKeyword", Pattern: `EXEC`, Action: lexer.Push("ExecArgs")},
 		{Name: "Ident", Pattern: `[^\s"=!]+`},
+	},
+	"ExecArgs": {
+		{Name: "Whitespace", Pattern: `[ \t]+`},
+		{Name: "LBracket", Pattern: `\[`},
+		{Name: "RBracket", Pattern: `\]`, Action: lexer.Pop()},
+		{Name: "Comma", Pattern: `,`},
+		{Name: "String", Pattern: `"(?:[^"\\]|\\.)*"`},
 	},
 })
 
@@ -37,6 +45,7 @@ type instruction struct {
 	Config  *configInst  `| @@`
 	Bin     *binInst     `| @@`
 	Add     *addInst     `| @@`
+	Exec    *execInst    `| @@`
 	Label   *labelInst   `| @@`
 	Arg     *argInst     `| @@`
 }
@@ -48,10 +57,11 @@ type contextInst struct {
 }
 
 type configInst struct {
-	Key      string  `"CONFIG" @Ident`
-	Required bool    `@"!"?`
-	Value    *string `( "=" @( Ident | String ) )?`
-	Desc     *string `@String?`
+	Key         string  `"CONFIG" @Ident`
+	Required    bool    `@"!"?`
+	Value       *string `( "=" ( @Ident`
+	QuotedValue *string `       | @String ) )?`
+	Desc        *string `@String?`
 }
 
 type binInst struct {
@@ -64,6 +74,10 @@ type addInst struct {
 	Src  string  `"ADD" @Ident`
 	Dst  string  `@Ident`
 	Desc *string `@String?`
+}
+
+type execInst struct {
+	Args []string `"EXEC" "[" @String ( "," @String )* "]"`
 }
 
 type labelInst struct {

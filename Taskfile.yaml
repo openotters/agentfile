@@ -7,9 +7,37 @@ includes:
     install: .tk/install/Taskfile.yaml
     license: .tk/license/Taskfile.yaml
     trufflehog: .tk/trufflehog/Taskfile.yaml
-    
+
 
 dotenv:
   - .env
   - PROJECT
   - .env.default
+
+tasks:
+  mocks:generate:
+    desc: Regenerate all mocks with mockery (reads .mockery.yaml)
+    cmds:
+      - go run github.com/vektra/mockery/v3@latest
+    sources:
+      - .mockery.yaml
+      - agent/**/*.go
+      - oci/*.go
+    generates:
+      - mocks/**/*.go
+
+  mocks:clean:
+    desc: Delete generated mocks (regenerate with `task mocks:generate`)
+    cmds:
+      - rm -rf mocks
+
+  mocks:verify:
+    desc: Fail if generated mocks drift from the interfaces they mirror
+    cmds:
+      - task: mocks:generate
+      - git diff --exit-code -- mocks
+
+  test:
+    desc: Run the test suite with race detector + coverage
+    cmds:
+      - go test -race -covermode=atomic -coverprofile=coverage.out ./...

@@ -1,3 +1,6 @@
+// Package build packs an Agentfile and its referenced contexts and bins
+// into an OCI artifact that can be pushed to a registry or inspected as a
+// standalone manifest. Inherited parents are resolved transparently.
 package build
 
 import (
@@ -7,7 +10,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-
 	"path/filepath"
 
 	"github.com/go-git/go-billy/v6"
@@ -15,45 +17,46 @@ import (
 	"github.com/opencontainers/go-digest"
 	"github.com/opencontainers/image-spec/specs-go"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+	"oras.land/oras-go/v2"
+	"oras.land/oras-go/v2/content"
+
 	"github.com/openotters/agentfile/oci"
 	"github.com/openotters/agentfile/resolve"
 	"github.com/openotters/agentfile/spec"
-	"oras.land/oras-go/v2"
-	"oras.land/oras-go/v2/content"
-	"oras.land/oras-go/v2/content/memory"
 )
 
-// BuildFromFile parses an Agentfile, resolves FROM inheritance, and builds the
-// OCI artifact into an in-memory store. Returns the resolved Agentfile, the
-// store, and the manifest digest.
-func FromFile(ctx context.Context, path string) (*spec.Agentfile, *memory.Store, *digest.Digest, error) {
-	af, err := spec.ParseFile(path)
+// FromFile parses an Agentfile, resolves FROM inheritance, and builds the
+// OCI artifact into target. Returns the image reference with digest.
+func FromFile(ctx context.Context, agentfilePath string, target oras.Target) (*spec.ReferenceWithDigest, error) {
+	af, err := spec.ParseFile(agentfilePath)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("parsing: %w", err)
+		return nil, fmt.Errorf("parsing: %w", err)
 	}
 
-	af, err = resolve.Resolve(ctx, af, oci.AgentFetcher())
+	resolvedaf, err := resolve.Resolve(ctx, af, oci.AgentFetcher())
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("resolving: %w", err)
+		return nil, fmt.Errorf("resolving: %w", err)
 	}
 
-	srcDir, _ := filepath.Abs(filepath.Dir(path))
-	store := memory.New()
+	srcDir, _ := filepath.Abs(filepath.Dir(agentfilePath))
 
-	d, err := Build(ctx, af, osfs.New(srcDir), store)
+	ref, err := Build(ctx, resolvedaf, osfs.New(srcDir), target)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("building: %w", err)
+		return nil, fmt.Errorf("building: %w", err)
 	}
 
-	return af, store, d, nil
+	return ref, nil
 }
 
 // Build creates an OCI artifact from a parsed Agentfile and pushes it into dst.
-// Context and ADD files are read from src. The manifest is tagged as "latest"
-// in dst. Returns the manifest digest.
+// Context and ADD files are read from src. The manifest is tagged with the agent
+// name in dst. Returns the image reference with digest.
 func Build(
-	ctx context.Context, af *spec.Agentfile, src billy.Filesystem, dst oras.Target,
-) (*digest.Digest, error) {
+	ctx context.Context,
+	af *spec.Agentfile,
+	src billy.Filesystem,
+	dst oras.Target,
+) (*spec.ReferenceWithDigest, error) {
 	agent := af.Agent
 
 	var layers []v1.Descriptor
@@ -103,7 +106,7 @@ func packManifest(
 	dst oras.Target,
 	af *spec.Agentfile,
 	layers []v1.Descriptor,
-) (*digest.Digest, error) {
+) (*spec.ReferenceWithDigest, error) {
 	configData, err := json.MarshalIndent(af, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("marshaling config: %w", err)
@@ -148,12 +151,24 @@ func packManifest(
 		return nil, fmt.Errorf("pushing manifest: %w", err)
 	}
 
-	if err = dst.Tag(ctx, manifestDesc, "latest"); err != nil {
-		return nil, fmt.Errorf("tagging manifest: %w", err)
+	// Tag with the digest so it's always resolvable by content address.
+	if err = dst.Tag(ctx, manifestDesc, manifestDesc.Digest.String()); err != nil {
+		return nil, fmt.Errorf("tagging manifest with digest: %w", err)
 	}
 
-	d := manifestDesc.Digest
-	return &d, nil
+	ref := spec.Reference{Name: af.Agent.Name, Tag: spec.DefaultTag}
+
+	// Tag with "name:latest" so it's resolvable by name.
+	if af.Agent.Name != "" {
+		if err = dst.Tag(ctx, manifestDesc, ref.String()); err != nil {
+			return nil, fmt.Errorf("tagging manifest with name: %w", err)
+		}
+	}
+
+	return &spec.ReferenceWithDigest{
+		Reference: ref,
+		Digest:    manifestDesc.Digest,
+	}, nil
 }
 
 func pushBlob(

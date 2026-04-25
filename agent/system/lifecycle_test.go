@@ -1,0 +1,276 @@
+//nolint:testpackage // direct internal access
+package system
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+
+	"github.com/go-git/go-billy/v6"
+	"github.com/go-git/go-billy/v6/memfs"
+	"github.com/go-git/go-billy/v6/osfs"
+	"github.com/go-git/go-billy/v6/util"
+	"github.com/google/uuid"
+	"oras.land/oras-go/v2/content/memory"
+
+	"github.com/openotters/agentfile/agent"
+	"github.com/openotters/agentfile/spec"
+)
+
+// --- setRan / getRan ----------------------------------------------------
+
+func TestSetRan_GetRan_RoundTrip(t *testing.T) {
+	t.Parallel()
+
+	a := NewAgent(uuid.New(), memfs.New())
+
+	if a.getRan() != nil {
+		t.Fatalf("fresh Agent should have nil ran channel")
+	}
+
+	ch := make(chan struct{})
+	a.setRan(ch)
+
+	if got := a.getRan(); got != ch {
+		t.Fatalf("getRan = %v, want the channel we set", got)
+	}
+}
+
+// --- markInitialized ----------------------------------------------------
+
+func TestMarkInitialized_PopulatesRuntimeAndAddr(t *testing.T) {
+	t.Parallel()
+
+	a := NewAgent(uuid.New(), memfs.New()) // addr empty by default
+
+	rt := &agent.AgentRuntime{
+		ResolvedConfig: agent.ResolvedConfig{Model: "m", Addr: "127.0.0.1:4321"},
+	}
+
+	a.markInitialized(rt)
+
+	if a.Runtime() != rt {
+		t.Fatalf("Runtime() did not return the marked-initialized runtime")
+	}
+
+	if a.Addr() != "127.0.0.1:4321" {
+		t.Fatalf("Addr() = %q, want runtime's Addr to be adopted when agent had none", a.Addr())
+	}
+
+	if a.cmdFn == nil {
+		t.Fatal("cmdFn should be built by markInitialized")
+	}
+}
+
+func TestMarkInitialized_KeepsExistingAddr(t *testing.T) {
+	t.Parallel()
+
+	// Agent already has an addr (set via WithAddr) — markInitialized must
+	// not clobber it with the runtime's addr. This covers the branch
+	// guarding `a.addr == ""`.
+	a := NewAgent(uuid.New(), memfs.New(), WithAddr("127.0.0.1:1111"))
+
+	rt := &agent.AgentRuntime{
+		ResolvedConfig: agent.ResolvedConfig{Model: "m", Addr: "127.0.0.1:9999"},
+	}
+
+	a.markInitialized(rt)
+
+	if a.Addr() != "127.0.0.1:1111" {
+		t.Fatalf("Addr() = %q, markInitialized overwrote a pre-set addr", a.Addr())
+	}
+}
+
+func TestMarkInitialized_IsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	a := NewAgent(uuid.New(), memfs.New())
+
+	first := &agent.AgentRuntime{ResolvedConfig: agent.ResolvedConfig{Model: "first"}}
+	second := &agent.AgentRuntime{ResolvedConfig: agent.ResolvedConfig{Model: "second"}}
+
+	a.markInitialized(first)
+	a.markInitialized(second) // must not replace first — initOnce guards
+
+	if a.Runtime().Model != "first" {
+		t.Fatalf("second markInitialized overrode first; got Model=%q", a.Runtime().Model)
+	}
+}
+
+// --- Prepare error path -------------------------------------------------
+
+func TestPrepare_MaterializeErrorSetsPullError(t *testing.T) {
+	t.Parallel()
+
+	// Empty OCI store + a ref that doesn't exist → afstore.Load fails,
+	// materialize wraps the failure with ErrPull, Prepare transitions to
+	// StatusPullError and returns the error. This covers the happy
+	// branch of the ErrPull discriminator in Prepare.
+	a := NewAgent(uuid.New(), memfs.New(),
+		WithStore(memory.New()),
+		WithReference(spec.Reference{Name: "missing", Tag: "latest"}),
+	)
+
+	err := a.Prepare(context.Background())
+	if err == nil {
+		t.Fatal("Prepare with empty store = nil, want error")
+	}
+
+	if got := a.Status(); got != agent.StatusPullError {
+		t.Fatalf("Status after failed Prepare = %v, want StatusPullError", got)
+	}
+}
+
+func TestPrepare_IsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	a := NewAgent(uuid.New(), memfs.New(),
+		WithStore(memory.New()),
+		WithReference(spec.Reference{Name: "missing", Tag: "latest"}),
+	)
+
+	err1 := a.Prepare(context.Background())
+	err2 := a.Prepare(context.Background())
+
+	if err1 == nil || err2 == nil {
+		t.Fatalf("expected both calls to return an error; got %v / %v", err1, err2)
+	}
+
+	// Same underlying error via the initOnce cache.
+	if err1.Error() != err2.Error() {
+		t.Fatalf("repeat Prepare returned different errors: %v / %v", err1, err2)
+	}
+}
+
+// --- Stop ---------------------------------------------------------------
+
+func TestStop_NotRunningIsNoop(t *testing.T) {
+	t.Parallel()
+
+	a := NewAgent(uuid.New(), memfs.New())
+
+	if err := a.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop on non-running agent = %v, want nil", err)
+	}
+}
+
+// --- Remove -------------------------------------------------------------
+
+func TestRemove_NilFilesystem(t *testing.T) {
+	t.Parallel()
+
+	// An Agent constructed without a filesystem (shouldn't happen in
+	// production, but defensive: Remove should transition status to
+	// StatusRemoved and return nil rather than panic on a nil fs).
+	a := &Agent{status: agent.NewStatusTracker()}
+
+	if err := a.Remove(context.Background()); err != nil {
+		t.Fatalf("Remove(nil fs) = %v, want nil", err)
+	}
+
+	if got := a.Status(); got != agent.StatusRemoved {
+		t.Fatalf("Status = %v, want StatusRemoved", got)
+	}
+}
+
+func TestRemove_WipesFilesystem(t *testing.T) {
+	t.Parallel()
+
+	// Use a disk-backed chroot so util.RemoveAll(fs, ".") actually
+	// clears contents (memfs rejects base-dir removal). Matches the
+	// production layout where Provider.CreateWithOptions calls
+	// a.fs.Chroot(id.String()) on an osfs root.
+	root := osfs.New(t.TempDir())
+	chroot, err := root.Chroot("agent")
+	if err != nil {
+		t.Fatalf("chroot: %v", err)
+	}
+
+	stageFile(t, chroot, "etc/context/AGENT.md", "hello")
+	stageFile(t, chroot, "workspace/notes.txt", "scratch")
+
+	a := NewAgent(uuid.New(), chroot)
+
+	if e := a.Remove(context.Background()); e != nil {
+		t.Fatalf("Remove: %v", e)
+	}
+
+	if got := a.Status(); got != agent.StatusRemoved {
+		t.Fatalf("Status = %v, want StatusRemoved", got)
+	}
+
+	// Both staged files are gone.
+	if _, e := chroot.Stat(filepath.Join("etc", "context", "AGENT.md")); e == nil {
+		t.Fatal("AGENT.md still present after Remove")
+	}
+
+	if _, e := chroot.Stat(filepath.Join("workspace", "notes.txt")); e == nil {
+		t.Fatal("notes.txt still present after Remove")
+	}
+}
+
+func TestRemove_CtxCancelled(t *testing.T) {
+	t.Parallel()
+
+	a := NewAgent(uuid.New(), memfs.New())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-cancel
+
+	err := a.Remove(ctx)
+	if err == nil {
+		t.Fatal("Remove(cancelled ctx) = nil, want ctx.Err()")
+	}
+
+	// Status moved to Removing before the ctx check — a partial transition
+	// is the documented behaviour (we got past the closeClient step but
+	// bailed before the filesystem wipe).
+	if got := a.Status(); got != agent.StatusRemoving {
+		t.Fatalf("Status = %v, want StatusRemoving after aborted Remove", got)
+	}
+}
+
+// --- Start preconditions ------------------------------------------------
+
+func TestStart_RefusesRunningAgent(t *testing.T) {
+	t.Parallel()
+
+	a := NewAgent(uuid.New(), memfs.New())
+	a.status.Set(agent.StatusRunning)
+
+	err := a.Start(context.Background())
+	if err == nil || err.Error() != "agent already running" {
+		t.Fatalf("Start(running) err = %v, want 'agent already running'", err)
+	}
+}
+
+func TestStart_RefusesRemovedAgent(t *testing.T) {
+	t.Parallel()
+
+	for _, s := range []agent.Status{agent.StatusRemoving, agent.StatusRemoved} {
+		s := s
+		t.Run(s.String(), func(t *testing.T) {
+			t.Parallel()
+
+			a := NewAgent(uuid.New(), memfs.New())
+			a.status.Set(s)
+
+			err := a.Start(context.Background())
+			if err == nil || err.Error() != "agent removed" {
+				t.Fatalf("Start(%v) err = %v, want 'agent removed'", s, err)
+			}
+		})
+	}
+}
+
+// --- helpers ------------------------------------------------------------
+
+// stageFile writes body to path on fs; used to give Remove something to
+// wipe. util.WriteFile creates parent dirs as needed via billy.
+func stageFile(t *testing.T, fs billy.Filesystem, path, body string) {
+	t.Helper()
+
+	if err := util.WriteFile(fs, path, []byte(body), 0o644); err != nil {
+		t.Fatalf("stage %s: %v", path, err)
+	}
+}

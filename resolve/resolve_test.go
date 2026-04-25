@@ -10,8 +10,8 @@ import (
 )
 
 func staticFetcher(agents map[string]*spec.Agentfile) resolve.Fetcher {
-	return func(_ context.Context, ref string) (*spec.Agentfile, error) {
-		af, ok := agents[ref]
+	return func(_ context.Context, ref spec.Reference) (*spec.Agentfile, error) {
+		af, ok := agents[ref.String()]
 		if !ok {
 			return nil, fmt.Errorf("not found: %s", ref)
 		}

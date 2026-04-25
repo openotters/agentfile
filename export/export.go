@@ -1,16 +1,19 @@
+// Package export serializes an OCI artifact stored in a memory store to a
+// portable JSON blob and restores it back into a memory store.
 package export
 
 import (
 	"bytes"
 	"context"
+	_ "crypto/sha256" // register sha256 for digest validation
 	"encoding/json"
 	"fmt"
 	"io"
 
-	_ "crypto/sha256" // register sha256 for digest validation
-
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"oras.land/oras-go/v2/content/memory"
+
+	"github.com/openotters/agentfile/spec"
 )
 
 type exportedArtifact struct {
@@ -23,10 +26,10 @@ type exportedBlob struct {
 	Data       []byte        `json:"data"`
 }
 
-func Export(store *memory.Store) ([]byte, error) {
-	ctx := context.Background()
-
-	desc, err := store.Resolve(ctx, "latest")
+// Export serializes the manifest, config, and all layers of ref into a
+// portable JSON blob. ctx is honored for each store fetch.
+func Export(ctx context.Context, store *memory.Store, ref spec.Reference) ([]byte, error) {
+	desc, err := store.Resolve(ctx, ref.String())
 	if err != nil {
 		return nil, fmt.Errorf("resolving manifest: %w", err)
 	}
@@ -64,14 +67,15 @@ func Export(store *memory.Store) ([]byte, error) {
 	return json.Marshal(artifact)
 }
 
-func Import(data []byte) (*memory.Store, string, error) {
+// Import reconstructs a memory store from a blob produced by Export and
+// returns the store plus the root manifest digest.
+func Import(ctx context.Context, data []byte) (*memory.Store, string, error) {
 	var artifact exportedArtifact
 	if err := json.Unmarshal(data, &artifact); err != nil {
 		return nil, "", fmt.Errorf("parsing artifact: %w", err)
 	}
 
 	store := memory.New()
-	ctx := context.Background()
 
 	for _, blob := range artifact.Blobs {
 		if err := store.Push(ctx, blob.Descriptor, bytes.NewReader(blob.Data)); err != nil {
@@ -79,7 +83,7 @@ func Import(data []byte) (*memory.Store, string, error) {
 		}
 	}
 
-	if err := store.Tag(ctx, artifact.Manifest, "latest"); err != nil {
+	if err := store.Tag(ctx, artifact.Manifest, artifact.Manifest.Digest.String()); err != nil {
 		return nil, "", fmt.Errorf("tagging: %w", err)
 	}
 
