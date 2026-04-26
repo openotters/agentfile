@@ -49,6 +49,11 @@ var (
 // ErrPull indicates the agent image could not be loaded from the OCI store.
 var ErrPull = fmt.Errorf("agent pull error")
 
+// ErrModel indicates the model resolver could not provide credentials for the
+// agentfile's declared model — typically a missing provider entry in
+// ~/.otters/providers.yaml or a model not in the provider's allowlist.
+var ErrModel = fmt.Errorf("model resolve error")
+
 // workspace holds everything needed to materialize an agent workspace.
 type workspace struct {
 	store          oras.ReadOnlyTarget
@@ -116,7 +121,7 @@ func (w *workspace) materialize(
 	if w.modelResolver != nil {
 		apiURL, apiKey, resolveErr := w.modelResolver(af.Agent.Model)
 		if resolveErr != nil {
-			return nil, fmt.Errorf("resolving model: %w", resolveErr)
+			return nil, errors.Join(ErrModel, fmt.Errorf("resolving model: %w", resolveErr))
 		}
 
 		rt.APIBase = apiURL

@@ -29,6 +29,7 @@ type Cmd interface {
 	Signal(sig os.Signal) error
 	SetStdout(w io.Writer)
 	SetStderr(w io.Writer)
+	SetEnv(env []string)
 }
 
 // defaultExecutor is the production Executor: builds real
@@ -61,3 +62,4 @@ func (c *osCmd) Signal(sig os.Signal) error {
 
 func (c *osCmd) SetStdout(w io.Writer) { c.cmd.Stdout = w }
 func (c *osCmd) SetStderr(w io.Writer) { c.cmd.Stderr = w }
+func (c *osCmd) SetEnv(env []string)   { c.cmd.Env = env }

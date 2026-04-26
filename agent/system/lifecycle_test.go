@@ -3,7 +3,11 @@ package system
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	"github.com/go-git/go-billy/v6"
@@ -14,6 +18,7 @@ import (
 	"oras.land/oras-go/v2/content/memory"
 
 	"github.com/openotters/agentfile/agent"
+	agentoci "github.com/openotters/agentfile/oci"
 	"github.com/openotters/agentfile/spec"
 )
 
@@ -121,6 +126,46 @@ func TestPrepare_MaterializeErrorSetsPullError(t *testing.T) {
 	}
 }
 
+func TestPrepare_ModelResolverErrorSetsModelError(t *testing.T) {
+	t.Parallel()
+
+	// Build a real image fixture so afstore.Load + extractLayers succeed
+	// and the failure surfaces from the model resolver — the only branch
+	// that should set StatusModelError. Mirrors the ErrPull discriminator
+	// test above.
+	store, ref := buildMaterializeFixture(t)
+
+	puller := agentoci.Puller(func(_ context.Context, _ spec.Reference, w io.Writer) error {
+		_, err := w.Write([]byte("#!/bin/sh\n"))
+
+		return err
+	})
+
+	resolverErr := fmt.Errorf("provider %q not configured", "anthropic")
+	resolver := func(string) (string, string, error) { return "", "", resolverErr }
+
+	a := NewAgent(uuid.New(), memfs.New(),
+		WithStore(store),
+		WithReference(ref),
+		WithAgentPuller(puller),
+		WithModelResolver(resolver),
+		WithOverrides(spec.WithModel("anthropic/claude-sonnet-4-20250514")),
+	)
+
+	err := a.Prepare(context.Background())
+	if err == nil {
+		t.Fatal("Prepare with failing resolver = nil, want error")
+	}
+
+	if !errors.Is(err, ErrModel) {
+		t.Fatalf("Prepare err = %v, want errors.Is ErrModel", err)
+	}
+
+	if got := a.Status(); got != agent.StatusModelError {
+		t.Fatalf("Status after failed Prepare = %v, want StatusModelError", got)
+	}
+}
+
 func TestPrepare_IsIdempotent(t *testing.T) {
 	t.Parallel()
 
@@ -136,9 +181,183 @@ func TestPrepare_IsIdempotent(t *testing.T) {
 		t.Fatalf("expected both calls to return an error; got %v / %v", err1, err2)
 	}
 
-	// Same underlying error via the initOnce cache.
+	// Failures aren't cached — but the failure mode is deterministic
+	// (empty store + missing ref = same afstore.Load error every call),
+	// so two attempts produce the same error string.
 	if err1.Error() != err2.Error() {
 		t.Fatalf("repeat Prepare returned different errors: %v / %v", err1, err2)
+	}
+}
+
+func TestPrepare_RetriesAfterModelError(t *testing.T) {
+	t.Parallel()
+
+	// Failed inits used to be cached forever via sync.Once; this test
+	// pins the new contract that a corrected providers.yaml unsticks
+	// the agent on the next Prepare.
+	store, ref := buildMaterializeFixture(t)
+
+	puller := agentoci.Puller(func(_ context.Context, _ spec.Reference, w io.Writer) error {
+		_, err := w.Write([]byte("#!/bin/sh\n"))
+
+		return err
+	})
+
+	var current atomic.Pointer[func(string) (string, string, error)]
+
+	failing := func(string) (string, string, error) {
+		return "", "", fmt.Errorf("provider %q not configured", "anthropic")
+	}
+	current.Store(&failing)
+
+	resolver := func(m string) (string, string, error) { return (*current.Load())(m) }
+
+	a := NewAgent(uuid.New(), memfs.New(),
+		WithStore(store),
+		WithReference(ref),
+		WithAgentPuller(puller),
+		WithModelResolver(resolver),
+		WithOverrides(spec.WithModel("anthropic/claude-sonnet-4-20250514")),
+	)
+
+	if err := a.Prepare(context.Background()); err == nil || !errors.Is(err, ErrModel) {
+		t.Fatalf("first Prepare = %v, want ErrModel", err)
+	}
+
+	if got := a.Status(); got != agent.StatusModelError {
+		t.Fatalf("status after first Prepare = %v, want StatusModelError", got)
+	}
+
+	// Swap to a working resolver and retry — must materialize this time.
+	working := func(string) (string, string, error) {
+		return "https://api.example.com", "key-fixed", nil
+	}
+	current.Store(&working)
+
+	if err := a.Prepare(context.Background()); err != nil {
+		t.Fatalf("second Prepare after swap = %v, want nil", err)
+	}
+
+	if a.rt == nil || a.cmdFn == nil {
+		t.Fatal("Prepare succeeded but rt / cmdFn unset")
+	}
+
+	if a.rt.APIKey != "key-fixed" {
+		t.Fatalf("rt.APIKey = %q, want key-fixed", a.rt.APIKey)
+	}
+}
+
+// --- Start re-resolve --------------------------------------------------
+
+func TestReResolveCredentials_UpdatesRTOnSuccess(t *testing.T) {
+	t.Parallel()
+
+	store, ref := buildMaterializeFixture(t)
+
+	puller := agentoci.Puller(func(_ context.Context, _ spec.Reference, w io.Writer) error {
+		_, err := w.Write([]byte("#!/bin/sh\n"))
+
+		return err
+	})
+
+	var current atomic.Pointer[func(string) (string, string, error)]
+
+	v1 := func(string) (string, string, error) {
+		return "https://api.v1.example.com", "key-v1", nil
+	}
+	current.Store(&v1)
+
+	resolver := func(m string) (string, string, error) { return (*current.Load())(m) }
+
+	a := NewAgent(uuid.New(), memfs.New(),
+		WithStore(store),
+		WithReference(ref),
+		WithAgentPuller(puller),
+		WithModelResolver(resolver),
+		WithOverrides(spec.WithModel("anthropic/claude-sonnet-4-20250514")),
+	)
+
+	if err := a.Prepare(context.Background()); err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+
+	if a.rt.APIKey != "key-v1" {
+		t.Fatalf("post-Prepare APIKey = %q, want key-v1", a.rt.APIKey)
+	}
+
+	v2 := func(string) (string, string, error) {
+		return "https://api.v2.example.com", "key-v2", nil
+	}
+	current.Store(&v2)
+
+	if err := a.reresolveCredentials(); err != nil {
+		t.Fatalf("reresolveCredentials: %v", err)
+	}
+
+	if a.rt.APIKey != "key-v2" || a.rt.APIBase != "https://api.v2.example.com" {
+		t.Fatalf("post-reresolve rt = (%q, %q), want (https://api.v2.example.com, key-v2)",
+			a.rt.APIBase, a.rt.APIKey)
+	}
+}
+
+func TestStart_FailsWithModelErrorOnReResolveFailure(t *testing.T) {
+	t.Parallel()
+
+	store, ref := buildMaterializeFixture(t)
+
+	puller := agentoci.Puller(func(_ context.Context, _ spec.Reference, w io.Writer) error {
+		_, err := w.Write([]byte("#!/bin/sh\n"))
+
+		return err
+	})
+
+	var current atomic.Pointer[func(string) (string, string, error)]
+
+	working := func(string) (string, string, error) {
+		return "https://api.example.com", "key-original", nil
+	}
+	current.Store(&working)
+
+	resolver := func(m string) (string, string, error) { return (*current.Load())(m) }
+
+	a := NewAgent(uuid.New(), memfs.New(),
+		WithStore(store),
+		WithReference(ref),
+		WithAgentPuller(puller),
+		WithModelResolver(resolver),
+		WithOverrides(spec.WithModel("anthropic/claude-sonnet-4-20250514")),
+	)
+
+	if err := a.Prepare(context.Background()); err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+
+	// Status hasn't transitioned to Stopped yet (no Run was issued), so
+	// fake the lifecycle by setting it manually — Start's switch lets
+	// StatusInitError / Created through, so any startable status works.
+	a.status.Set(agent.StatusStopped)
+
+	failing := func(string) (string, string, error) {
+		return "", "", fmt.Errorf("provider %q not configured", "anthropic")
+	}
+	current.Store(&failing)
+
+	err := a.Start(context.Background())
+	if err == nil {
+		t.Fatal("Start with failing resolver = nil, want error")
+	}
+
+	if !errors.Is(err, ErrModel) {
+		t.Fatalf("Start err = %v, want errors.Is ErrModel", err)
+	}
+
+	if got := a.Status(); got != agent.StatusModelError {
+		t.Fatalf("status after Start = %v, want StatusModelError", got)
+	}
+
+	// Original credentials must remain — no torn write.
+	if a.rt.APIKey != "key-original" || a.rt.APIBase != "https://api.example.com" {
+		t.Fatalf("rt mutated on failure: APIBase=%q APIKey=%q", a.rt.APIBase, a.rt.APIKey)
 	}
 }
 

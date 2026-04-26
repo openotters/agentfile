@@ -29,6 +29,7 @@ type stubCmd struct {
 	mu       sync.Mutex
 	stdout   io.Writer
 	stderr   io.Writer
+	env      []string
 	startFn  func() error
 	waitFn   func() error
 	signals  []os.Signal
@@ -64,6 +65,7 @@ func (s *stubCmd) Signal(sig os.Signal) error {
 
 func (s *stubCmd) SetStdout(w io.Writer) { s.stdout = w }
 func (s *stubCmd) SetStderr(w io.Writer) { s.stderr = w }
+func (s *stubCmd) SetEnv(env []string)   { s.env = env }
 
 func (s *stubCmd) signalsSent() []os.Signal {
 	s.mu.Lock()

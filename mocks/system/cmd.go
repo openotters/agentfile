@@ -38,6 +38,46 @@ func (_m *MockCmd) EXPECT() *MockCmd_Expecter {
 	return &MockCmd_Expecter{mock: &_m.Mock}
 }
 
+// SetEnv provides a mock function for the type MockCmd
+func (_mock *MockCmd) SetEnv(env []string) {
+	_mock.Called(env)
+	return
+}
+
+// MockCmd_SetEnv_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetEnv'
+type MockCmd_SetEnv_Call struct {
+	*mock.Call
+}
+
+// SetEnv is a helper method to define mock.On call
+//   - env []string
+func (_e *MockCmd_Expecter) SetEnv(env interface{}) *MockCmd_SetEnv_Call {
+	return &MockCmd_SetEnv_Call{Call: _e.mock.On("SetEnv", env)}
+}
+
+func (_c *MockCmd_SetEnv_Call) Run(run func(env []string)) *MockCmd_SetEnv_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 []string
+		if args[0] != nil {
+			arg0 = args[0].([]string)
+		}
+		run(
+			arg0,
+		)
+	})
+	return _c
+}
+
+func (_c *MockCmd_SetEnv_Call) Return() *MockCmd_SetEnv_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *MockCmd_SetEnv_Call) RunAndReturn(run func(env []string)) *MockCmd_SetEnv_Call {
+	_c.Run(run)
+	return _c
+}
+
 // SetStderr provides a mock function for the type MockCmd
 func (_mock *MockCmd) SetStderr(w io.Writer) {
 	_mock.Called(w)

@@ -11,14 +11,15 @@ func TestStatusString(t *testing.T) {
 	t.Parallel()
 
 	cases := map[Status]string{
-		StatusCreated:   "created",
-		StatusRunning:   "running",
-		StatusStopped:   "stopped",
-		StatusRemoving:  "removing",
-		StatusRemoved:   "removed",
-		StatusInitError: "init_error",
-		StatusPullError: "pull_error",
-		Status(99):      "unknown",
+		StatusCreated:    "created",
+		StatusRunning:    "running",
+		StatusStopped:    "stopped",
+		StatusRemoving:   "removing",
+		StatusRemoved:    "removed",
+		StatusInitError:  "init_error",
+		StatusPullError:  "pull_error",
+		StatusModelError: "model_error",
+		Status(99):       "unknown",
 	}
 
 	for s, want := range cases {

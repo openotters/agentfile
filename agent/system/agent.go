@@ -28,9 +28,9 @@ type Agent struct {
 	cmdFn  cmdFunc
 	dialer Dialer
 
-	initOnce sync.Once
-	initErr  error
-	ran      chan struct{}
+	initMu      sync.Mutex
+	initialized bool
+	ran         chan struct{}
 
 	clientMu   sync.Mutex
 	clientConn *grpc.ClientConn
@@ -100,9 +100,12 @@ func (a *Agent) ReapplyMounts() error {
 // call concurrently; repeat callers observe the same error.
 func (a *Agent) Prepare(ctx context.Context) error {
 	if err := a.initialize(ctx); err != nil {
-		if errors.Is(err, ErrPull) {
+		switch {
+		case errors.Is(err, ErrPull):
 			a.status.Set(agent.StatusPullError)
-		} else {
+		case errors.Is(err, ErrModel):
+			a.status.Set(agent.StatusModelError)
+		default:
 			a.status.Set(agent.StatusInitError)
 		}
 
@@ -135,17 +138,55 @@ func (a *Agent) Run(ctx context.Context) error {
 // Blocks until the subprocess exits or ctx is cancelled (same contract as
 // Run). Returns an error if the agent is already running or has been
 // removed. The loopback address from the original Create is reused.
+//
+// Before re-running, Start re-invokes the model resolver against the
+// agent's resolved model, so providers.yaml edits made between Stop
+// and Start (key rotation, api-base change) take effect on the next
+// subprocess. Fresh-create agents (StatusCreated) bypass this branch
+// — Run → Prepare → materialize will resolve on its own.
 func (a *Agent) Start(ctx context.Context) error {
 	switch a.Status() {
 	case agent.StatusRunning:
 		return fmt.Errorf("agent already running")
 	case agent.StatusRemoving, agent.StatusRemoved:
 		return fmt.Errorf("agent removed")
-	case agent.StatusCreated, agent.StatusStopped, agent.StatusInitError, agent.StatusPullError:
-		// startable: fall through to Run
+	case agent.StatusCreated, agent.StatusStopped,
+		agent.StatusInitError, agent.StatusPullError, agent.StatusModelError:
+		// startable: fall through
+	}
+
+	if err := a.reresolveCredentials(); err != nil {
+		a.status.Set(agent.StatusModelError)
+
+		return err
 	}
 
 	return a.Run(ctx)
+}
+
+// reresolveCredentials re-runs the model resolver against the agent's
+// already-resolved model and updates rt.APIBase / rt.APIKey in place.
+// process.buildCmdArgs reads both fields on every closure invocation,
+// so the next subprocess sees the fresh values without rebuilding cmdFn.
+//
+// No-op when there is no rt yet (StatusCreated agents take the
+// Run → Prepare → materialize path), no resolver was wired, or the
+// model has no provider prefix.
+func (a *Agent) reresolveCredentials() error {
+	if a.rt == nil || a.ws.modelResolver == nil || a.rt.Model == "" {
+		return nil
+	}
+
+	apiBase, apiKey, err := a.ws.modelResolver(a.rt.Model)
+	if err != nil {
+		return errors.Join(ErrModel,
+			fmt.Errorf("re-resolving model %q: %w", a.rt.Model, err))
+	}
+
+	a.rt.APIBase = apiBase
+	a.rt.APIKey = apiKey
+
+	return nil
 }
 
 // Stop signals the running agent to exit and blocks until Run has returned
@@ -207,34 +248,47 @@ func (a *Agent) getRan() chan struct{} {
 }
 
 // initialize materializes the workspace and builds the command function.
-// Serialized and idempotent via sync.Once; concurrent callers observe the
-// same initErr.
+// Serialised; concurrent callers wait on initMu. Successful inits are
+// cached (initialized=true) and skipped on subsequent calls. Failures
+// are NOT cached — the next caller retries materialize, so a fresh
+// providers.yaml can unstick a model_error agent on the next Start.
 func (a *Agent) initialize(ctx context.Context) error {
-	a.initOnce.Do(func() {
-		rt, err := a.ws.materialize(ctx, a.fs, a.id, a.addr)
-		if err != nil {
-			a.initErr = err
+	a.initMu.Lock()
+	defer a.initMu.Unlock()
 
-			return
-		}
+	if a.initialized {
+		return nil
+	}
 
-		a.cmdFn = a.proc.buildCmdFn(rt, a.fs.Root())
-		a.rt = rt
-	})
+	rt, err := a.ws.materialize(ctx, a.fs, a.id, a.addr)
+	if err != nil {
+		return err
+	}
 
-	return a.initErr
+	a.cmdFn = a.proc.buildCmdFn(rt, a.fs.Root())
+	a.rt = rt
+	a.initialized = true
+
+	return nil
 }
 
 // markInitialized lets Provider.Load bind an already-materialized runtime
 // onto an Agent, skipping future ws.materialize calls. Restores a.addr
 // from the persisted runtime so Prompt can reach the gRPC server.
+// Idempotent: subsequent calls are a no-op once initialized is set.
 func (a *Agent) markInitialized(rt *agent.AgentRuntime) {
-	a.initOnce.Do(func() {
-		if rt.Addr != "" && a.addr == "" {
-			a.addr = rt.Addr
-		}
+	a.initMu.Lock()
+	defer a.initMu.Unlock()
 
-		a.cmdFn = a.proc.buildCmdFn(rt, a.fs.Root())
-		a.rt = rt
-	})
+	if a.initialized {
+		return
+	}
+
+	if rt.Addr != "" && a.addr == "" {
+		a.addr = rt.Addr
+	}
+
+	a.cmdFn = a.proc.buildCmdFn(rt, a.fs.Root())
+	a.rt = rt
+	a.initialized = true
 }

@@ -29,7 +29,8 @@ type StatusObserver interface {
 // Run starts the runtime subprocess, blocking until it exits or ctx is
 // cancelled. Run calls Prepare internally if the workspace has not yet
 // been materialized; initialization errors are returned directly and
-// also surfaced via Status (StatusInitError / StatusPullError).
+// also surfaced via Status (StatusInitError / StatusPullError /
+// StatusModelError).
 //
 // Start re-runs a previously-stopped agent on the already-materialized
 // workspace. Blocks until the subprocess exits or ctx is cancelled, same

@@ -23,13 +23,19 @@ type AgentRuntime struct {
 	ResolvedConfig `yaml:",inline" json:",inline"`
 }
 
-// ResolvedConfig holds the merged configuration after applying spec overrides.
+// ResolvedConfig holds the merged configuration after applying spec
+// overrides. APIBase and APIKey are intentionally non-serialised
+// (`yaml:"-"` / `json:"-"`): they are credentials resolved from
+// providers.yaml on every (re)start and travel to the runtime
+// subprocess via env (<PROVIDER>_API_KEY / <PROVIDER>_API_BASE),
+// not via disk or argv. Older agent.yaml files that contain these
+// fields are tolerated on load — yaml/json simply skip them.
 type ResolvedConfig struct {
 	Name       string         `yaml:"name" json:"name"`
 	Model      string         `yaml:"model" json:"model"`
 	Addr       string         `yaml:"addr,omitempty" json:"addr,omitempty"`
-	APIBase    string         `yaml:"api_base,omitempty" json:"api_base,omitempty"`
-	APIKey     string         `yaml:"api_key,omitempty" json:"api_key,omitempty"`
+	APIBase    string         `yaml:"-" json:"-"`
+	APIKey     string         `yaml:"-" json:"-"`
 	Exec       []string       `yaml:"exec,omitempty" json:"exec,omitempty"`
 	Provenance *Provenance    `yaml:"provenance,omitempty" json:"provenance,omitempty"`
 	Tools      []ResolvedTool `yaml:"tools,omitempty" json:"tools,omitempty"`

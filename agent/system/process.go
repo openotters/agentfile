@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/openotters/agentfile/agent"
@@ -30,9 +31,9 @@ type process struct {
 
 // buildCmdArgs returns the full argv slice passed to the runtime
 // binary, given the resolved runtime config and any caller-specified
-// extra args. Kept as a pure function so the ordering contract (exec
-// verb first, shared flags next, address, then extras) can be tested
-// without spawning a subprocess.
+// extra args. Credentials (api-key, api-base) are intentionally NOT
+// on argv — they leak through `ps`. They travel via the subprocess
+// env via buildCmdEnv.
 func buildCmdArgs(rt *agent.AgentRuntime, rootDir string, extraArgs ...string) []string {
 	execArgs := rt.Exec
 	if len(execArgs) == 0 {
@@ -42,14 +43,6 @@ func buildCmdArgs(rt *agent.AgentRuntime, rootDir string, extraArgs ...string) [
 	args := append([]string{}, execArgs...)
 	args = append(args, "--root", rootDir, "--model", rt.Model)
 
-	if rt.APIBase != "" {
-		args = append(args, "--api-base", rt.APIBase)
-	}
-
-	if rt.APIKey != "" {
-		args = append(args, "--api-key", rt.APIKey)
-	}
-
 	if rt.Addr != "" {
 		args = append(args, "--addr", rt.Addr)
 	}
@@ -57,6 +50,48 @@ func buildCmdArgs(rt *agent.AgentRuntime, rootDir string, extraArgs ...string) [
 	args = append(args, extraArgs...)
 
 	return args
+}
+
+// buildCmdEnv returns os.Environ() plus <PROVIDER>_API_KEY /
+// <PROVIDER>_API_BASE entries when the resolved values are non-empty.
+// Inheriting os.Environ keeps PATH, HOME, etc. working for the
+// runtime subprocess. The runtime accepts both env names natively
+// (see runtime/pkg/agent/agent.go).
+//
+// A model without a provider prefix (e.g. "bare-name") yields no
+// credential entries — there is no provider to scope them under.
+func buildCmdEnv(rt *agent.AgentRuntime) []string {
+	env := os.Environ()
+
+	provider, _ := splitProviderPrefix(rt.Model)
+	if provider == "" {
+		return env
+	}
+
+	prefix := strings.ToUpper(provider)
+
+	if rt.APIKey != "" {
+		env = append(env, prefix+"_API_KEY="+rt.APIKey)
+	}
+
+	if rt.APIBase != "" {
+		env = append(env, prefix+"_API_BASE="+rt.APIBase)
+	}
+
+	return env
+}
+
+// splitProviderPrefix returns the part before the first '/' in a
+// fully-qualified model name (e.g. "anthropic/claude-..." → "anthropic").
+// Returns "" when the model has no slash. Mirrors openotters/internal's
+// splitModel — duplicated locally to avoid the agentfile→openotters
+// import cycle. Promote to a shared helper if a third caller appears.
+func splitProviderPrefix(model string) (string, string) {
+	if idx := strings.Index(model, "/"); idx > 0 {
+		return model[:idx], model[idx+1:]
+	}
+
+	return "", model
 }
 
 func (p *process) buildCmdFn(rt *agent.AgentRuntime, rootDir string) cmdFunc {
@@ -69,6 +104,7 @@ func (p *process) buildCmdFn(rt *agent.AgentRuntime, rootDir string) cmdFunc {
 		c := executor.Command(runtimeBin, buildCmdArgs(rt, rootDir, extraArgs...)...)
 		c.SetStdout(stdout)
 		c.SetStderr(stderr)
+		c.SetEnv(buildCmdEnv(rt))
 
 		return c
 	}

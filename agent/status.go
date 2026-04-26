@@ -16,6 +16,7 @@ const (
 	StatusRemoved
 	StatusInitError
 	StatusPullError
+	StatusModelError
 )
 
 // String returns the lowercase name of the Status — used for logs and
@@ -37,6 +38,8 @@ func (s Status) String() string {
 		return "init_error"
 	case StatusPullError:
 		return "pull_error"
+	case StatusModelError:
+		return "model_error"
 	default:
 		return "unknown"
 	}
