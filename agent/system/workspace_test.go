@@ -9,7 +9,7 @@ import (
 func TestWorkspaceContextMarkdown_IncludesRoot(t *testing.T) {
 	t.Parallel()
 
-	md := string(workspaceContextMarkdown("/var/agents/abc"))
+	md := string(workspaceContextMarkdown("/var/agents/abc", "sandbox-exec"))
 
 	for _, needle := range []string{
 		"# Your workspace",
@@ -32,7 +32,7 @@ func TestWorkspaceContextMarkdown_IncludesRoot(t *testing.T) {
 func TestWorkspaceContextMarkdown_EmptyRootOmitsHostLine(t *testing.T) {
 	t.Parallel()
 
-	md := string(workspaceContextMarkdown(""))
+	md := string(workspaceContextMarkdown("", "none"))
 
 	// Header + layout must still be present.
 	if !strings.HasPrefix(md, "# Your workspace\n") {

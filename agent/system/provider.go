@@ -35,17 +35,24 @@ type Provider struct {
 	logDir        string
 	loopback      LoopbackAllocator
 	agentDefaults []AgentOption
+	// sandboxKind names the per-OS sandbox impl resolved at
+	// construction ("sandbox-exec", "bwrap", or "none"). Plumbed
+	// onto each agent's workspace so WORKSPACE.md can stamp it.
+	// Resolution is fast (LookPath at worst) and platform-stable,
+	// so it's done once at NewProvider rather than per Create.
+	sandboxKind string
 }
 
 // NewProvider creates a system Provider. storeFor is called once per
 // Create to produce the oras.ReadOnlyTarget backing that agent's image.
 func NewProvider(root billy.Filesystem, storeFor StoreFor, opts ...ProviderOption) *Provider {
 	a := &Provider{
-		fs:        root,
-		hostFS:    osfs.New("/"),
-		storeFor:  storeFor,
-		ociPuller: agentoci.RemotePuller(),
-		loopback:  defaultLoopbackAllocator{},
+		fs:          root,
+		hostFS:      osfs.New("/"),
+		storeFor:    storeFor,
+		ociPuller:   agentoci.RemotePuller(),
+		loopback:    defaultLoopbackAllocator{},
+		sandboxKind: wrapperKind(),
 	}
 
 	for _, opt := range opts {
@@ -61,6 +68,7 @@ func (a *Provider) agentOpts(ref spec.Reference, overrides []spec.Override) []Ag
 		WithReference(ref),
 		WithAgentPuller(a.ociPuller),
 		withAgentHostFS(a.hostFS),
+		withAgentSandboxKind(a.sandboxKind),
 	}
 
 	if a.localRuntime != "" {

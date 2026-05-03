@@ -30,6 +30,7 @@ type stubCmd struct {
 	stdout   io.Writer
 	stderr   io.Writer
 	env      []string
+	dir      string
 	startFn  func() error
 	waitFn   func() error
 	signals  []os.Signal
@@ -66,6 +67,7 @@ func (s *stubCmd) Signal(sig os.Signal) error {
 func (s *stubCmd) SetStdout(w io.Writer) { s.stdout = w }
 func (s *stubCmd) SetStderr(w io.Writer) { s.stderr = w }
 func (s *stubCmd) SetEnv(env []string)   { s.env = env }
+func (s *stubCmd) SetDir(dir string)     { s.dir = dir }
 
 func (s *stubCmd) signalsSent() []os.Signal {
 	s.mu.Lock()
@@ -88,6 +90,17 @@ type stubCall struct {
 func (s *stubExecutor) Command(name string, args ...string) Cmd {
 	s.calls = append(s.calls, stubCall{name: name, args: append([]string{}, args...)})
 	return s.cmd
+}
+
+// withNoopSandbox neutralises sandboxFor for the duration of a test so
+// process-level assertions (executor argv, env, dir) can verify the
+// runtime spawn shape without the per-OS sandbox wrapper prepending
+// `sandbox-exec` / `bwrap` to argv.
+func withNoopSandbox(t *testing.T) {
+	t.Helper()
+	saved := sandboxFor
+	sandboxFor = func(_ sandboxParams) wrapper { return noopWrapper{} }
+	t.Cleanup(func() { sandboxFor = saved })
 }
 
 // --- defaultExecutor / osCmd --------------------------------------------
@@ -137,14 +150,14 @@ func TestDefaultExecutor_WritesStdoutStderr(t *testing.T) {
 // --- process.serve via stubs --------------------------------------------
 
 func TestProcessServe_HappyPath(t *testing.T) {
-	t.Parallel()
+	withNoopSandbox(t)
 
 	cmd := &stubCmd{}
 	execer := &stubExecutor{cmd: cmd}
 
 	p := &process{executor: execer, stdout: io.Discard, stderr: io.Discard}
 
-	if err := p.serve(context.Background(), p.buildCmdFn(newTestRT(), "/r")); err != nil {
+	if err := p.serve(context.Background(), p.buildCmdFn(newTestRT(), "/r", nil)); err != nil {
 		t.Fatalf("serve: %v", err)
 	}
 
@@ -170,7 +183,7 @@ func TestProcessServe_HappyPath(t *testing.T) {
 }
 
 func TestProcessServe_StartError(t *testing.T) {
-	t.Parallel()
+	withNoopSandbox(t)
 
 	startErr := errors.New("binary not found")
 
@@ -179,7 +192,7 @@ func TestProcessServe_StartError(t *testing.T) {
 
 	p := &process{executor: execer, stdout: io.Discard, stderr: io.Discard}
 
-	err := p.serve(context.Background(), p.buildCmdFn(newTestRT(), "/r"))
+	err := p.serve(context.Background(), p.buildCmdFn(newTestRT(), "/r", nil))
 	if err == nil || !strings.Contains(err.Error(), "starting runtime") {
 		t.Fatalf("serve err = %v, want wrapped 'starting runtime'", err)
 	}
@@ -190,7 +203,7 @@ func TestProcessServe_StartError(t *testing.T) {
 }
 
 func TestProcessServe_ExitErrorPropagates(t *testing.T) {
-	t.Parallel()
+	withNoopSandbox(t)
 
 	exitErr := errors.New("exit status 42")
 
@@ -199,13 +212,13 @@ func TestProcessServe_ExitErrorPropagates(t *testing.T) {
 
 	p := &process{executor: execer, stdout: io.Discard, stderr: io.Discard}
 
-	if err := p.serve(context.Background(), p.buildCmdFn(newTestRT(), "/r")); !errors.Is(err, exitErr) {
+	if err := p.serve(context.Background(), p.buildCmdFn(newTestRT(), "/r", nil)); !errors.Is(err, exitErr) {
 		t.Fatalf("serve err = %v, want %v", err, exitErr)
 	}
 }
 
 func TestProcessServe_CtxCancelSignalsThenWaits(t *testing.T) {
-	t.Parallel()
+	withNoopSandbox(t)
 
 	// Wait blocks on a channel until the stub's Signal is delivered —
 	// this lets us assert that ctx cancellation drives Signal first,
@@ -227,7 +240,7 @@ func TestProcessServe_CtxCancelSignalsThenWaits(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	done := make(chan error, 1)
-	go func() { done <- p.serve(ctx, p.buildCmdFn(newTestRT(), "/r")) }()
+	go func() { done <- p.serve(ctx, p.buildCmdFn(newTestRT(), "/r", nil)) }()
 
 	// Let serve register p.cmd + spawn the Wait goroutine.
 	time.Sleep(20 * time.Millisecond)

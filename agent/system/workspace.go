@@ -43,6 +43,14 @@ var (
 		"workspace",
 		"tmp",
 		filepath.Join("var", "lib"),
+		// home/ + standard XDG subdirs are pre-created so tool
+		// subprocesses that touch $HOME / $XDG_* (wget's HSTS file,
+		// curl's netrc, …) have writable destinations inside the
+		// agent root and don't pollute the operator's real home.
+		"home",
+		filepath.Join("home", ".config"),
+		filepath.Join("home", ".cache"),
+		filepath.Join("home", ".local", "share"),
 	}
 )
 
@@ -71,6 +79,10 @@ type workspace struct {
 	// Distinct from fs (the per-agent chroot) because billy's chroot
 	// would rewrite absolute symlink targets and host-file sources.
 	hostFS billy.Filesystem
+	// sandboxKind is the wrapper impl in use ("sandbox-exec",
+	// "bwrap", or "none"). Stamped into WORKSPACE.md so the agent
+	// knows what isolation it has.
+	sandboxKind string
 }
 
 func (w *workspace) materialize(
@@ -165,16 +177,37 @@ func (w *workspace) materialize(
 // real on-disk root of the agent's workspace. Kept pure so the exact
 // phrasing the LLM sees can be regression-tested without exercising
 // billy. An empty root omits the "Your workspace on the host" line.
-func workspaceContextMarkdown(root string) []byte {
+//
+// sandboxKind is the wrapper impl in effect ("sandbox-exec", "bwrap",
+// or "none"). Empty falls back to "none" so the doc doesn't lie when
+// the field is unset on legacy callers.
+func workspaceContextMarkdown(root, sandboxKind string) []byte {
 	var b bytes.Buffer
+
+	if sandboxKind == "" {
+		sandboxKind = sandboxKindNone
+	}
 
 	b.WriteString("# Your workspace\n\n")
 	b.WriteString("You run as a subprocess on the user's host machine. ")
-	b.WriteString("The openotters daemon has prepared a dedicated directory ")
-	b.WriteString("for you with a small FHS-style layout, but **there is no ")
-	b.WriteString("chroot or namespace isolation** — tool binaries you invoke ")
-	b.WriteString("see the user's real filesystem. Treat absolute paths with ")
-	b.WriteString("care and default to the dirs listed below.\n\n")
+	b.WriteString("The openotters daemon prepares a dedicated directory ")
+	b.WriteString("for you with a small FHS-style layout. Your environment ")
+	b.WriteString("is locked down (PATH points only at your own bin dir, ")
+	b.WriteString("HOME / TMPDIR / XDG_* live inside this directory) and ")
+	switch sandboxKind {
+	case sandboxKindDarwin:
+		b.WriteString("a per-process **sandbox-exec** profile denies reads / writes outside ")
+		b.WriteString("the paths listed below — `cat /etc/passwd` and similar will fail.\n\n")
+	case sandboxKindLinux:
+		b.WriteString("a per-process **bwrap** namespace denies reads / writes outside ")
+		b.WriteString("the paths listed below — `cat /etc/passwd` and similar will fail.\n\n")
+	default:
+		b.WriteString("**no per-process sandbox is in effect on this host** ")
+		b.WriteString("(install `sandbox-exec` on macOS or `bubblewrap` on Linux for ")
+		b.WriteString("filesystem-level isolation). Tool binaries can still read the ")
+		b.WriteString("user's real filesystem; treat absolute paths with care and ")
+		b.WriteString("default to the dirs below.\n\n")
+	}
 
 	if root != "" {
 		fmt.Fprintf(&b, "Your workspace on the host: `%s`\n\n", root)
@@ -183,20 +216,27 @@ func workspaceContextMarkdown(root string) []byte {
 	b.WriteString("Layout inside the workspace:\n\n")
 	b.WriteString("- `/etc/context/` — your system-prompt context files " +
 		"(this file lives here, alongside AGENT.md and any MOUNTS.md).\n")
-	b.WriteString("- `/etc/data/` — static files baked in via `ADD` directives; your subprocess CWD points here.\n")
-	b.WriteString("- `/usr/bin/` — your BIN tools (each BIN directive installs one binary here).\n")
+	b.WriteString("- `/etc/data/` — static files baked in via `ADD` directives.\n")
+	b.WriteString("- `/usr/bin/` — your BIN tools " +
+		"(each BIN directive installs one binary here; the ONLY entry on $PATH).\n")
 	b.WriteString("- `/usr/local/bin/runtime` — the runtime you yourself are.\n")
-	b.WriteString("- `/workspace/` — scratch space meant for artefacts you produce during a session.\n")
-	b.WriteString("- `/tmp/` — short-lived files.\n")
+	b.WriteString("- `/workspace/` — your default CWD; scratch space for session artefacts.\n")
+	b.WriteString("- `/home/` — `$HOME` for tool subprocesses (`~/.config`, `~/.cache`, `~/.local/share` live here).\n")
+	b.WriteString("- `/tmp/` — `$TMPDIR`; short-lived files.\n")
 	b.WriteString("- `/var/lib/` — persistent state (the memory DB lives here).\n\n")
 
 	b.WriteString("Working-directory rules:\n\n")
-	b.WriteString("- Commands you run through a BIN inherit the runtime's CWD. Don't rely on it; pass absolute paths.\n")
-	b.WriteString("- Prefer writing to `/workspace/` or `/tmp/`; treat `/etc/` and `/usr/` as read-only.\n")
+	b.WriteString("- Default CWD is `/workspace/`; relative paths in tool args resolve there.\n")
+	b.WriteString("- Prefer writing to `/workspace/`, `/tmp/`, or `/home/`; treat `/etc/` and `/usr/` as read-only.\n")
 	b.WriteString("- If `/etc/context/MOUNTS.md` exists, those paths are user-mounted host directories — " +
 		"the only \"outside\" paths you should explore or modify.\n")
-	b.WriteString("- Without a MOUNTS.md entry, do not probe arbitrary host paths " +
-		"(`/Users/…`, `/home/…`, `/etc/passwd`) even though they're reachable.\n")
+	if sandboxKind == sandboxKindNone {
+		b.WriteString("- Without a MOUNTS.md entry, do not probe arbitrary host paths " +
+			"(`/Users/…`, `/home/…`, `/etc/passwd`) even though they're reachable.\n")
+	} else {
+		b.WriteString("- Reads outside the workspace + listed mounts will be denied by the sandbox; ")
+		b.WriteString("don't waste turns probing host paths.\n")
+	}
 
 	return b.Bytes()
 }
@@ -220,7 +260,7 @@ func (w *workspace) resolveDigest(ref string) string {
 
 func (w *workspace) writeWorkspaceContext(fs billy.Filesystem) error {
 	return util.WriteFile(fs, filepath.Join(contextDir, "WORKSPACE.md"),
-		workspaceContextMarkdown(fs.Root()), 0o644)
+		workspaceContextMarkdown(fs.Root(), w.sandboxKind), 0o644)
 }
 
 // applyMounts creates the symlinks declared by WithMounts inside the

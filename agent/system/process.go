@@ -52,16 +52,29 @@ func buildCmdArgs(rt *agent.AgentRuntime, rootDir string, extraArgs ...string) [
 	return args
 }
 
-// buildCmdEnv returns os.Environ() plus <PROVIDER>_API_KEY /
-// <PROVIDER>_API_BASE entries when the resolved values are non-empty.
-// Inheriting os.Environ keeps PATH, HOME, etc. working for the
-// runtime subprocess. The runtime accepts both env names natively
-// (see runtime/pkg/agent/agent.go).
+// buildCmdEnv returns the locked-down environment for the runtime
+// subprocess, plus per-provider credential entries
+// (<PROVIDER>_API_KEY / <PROVIDER>_API_BASE) when the resolved values
+// are non-empty.
+//
+// Crucially this does NOT inherit os.Environ — the runtime spawn
+// (and every tool subprocess that forks from it) sees only:
+//
+//   - PATH = <rootDir>/usr/bin   (the agent's pinned BIN tools, not
+//     the host's)
+//   - HOME / XDG_* / TMPDIR rooted inside the agent tree
+//   - LANG = C.UTF-8 for predictable locale output
+//   - OTTERS_AGENT_ROOT + OTTERS_MOUNTS so the runtime can render
+//     Workspace.md from real paths
+//   - <PROVIDER>_API_{KEY,BASE} for the resolved model
+//
+// SSH_AUTH_SOCK, AWS_*, GITHUB_TOKEN, the host's PATH, etc. stay on
+// the host process — the agent never sees them.
 //
 // A model without a provider prefix (e.g. "bare-name") yields no
 // credential entries — there is no provider to scope them under.
-func buildCmdEnv(rt *agent.AgentRuntime) []string {
-	env := os.Environ()
+func buildCmdEnv(rt *agent.AgentRuntime, rootDir string, mounts []Mount) []string {
+	env := BuildLockedEnv(rootDir, mounts)
 
 	provider, _ := splitProviderPrefix(rt.Model)
 	if provider == "" {
@@ -94,17 +107,30 @@ func splitProviderPrefix(model string) (string, string) {
 	return "", model
 }
 
-func (p *process) buildCmdFn(rt *agent.AgentRuntime, rootDir string) cmdFunc {
+func (p *process) buildCmdFn(rt *agent.AgentRuntime, rootDir string, mounts []Mount) cmdFunc {
 	runtimeBin := filepath.Join(rootDir, RuntimeBin)
 	stdout := p.stdout
 	stderr := p.stderr
 	executor := p.executor
 
+	// Build the per-OS sandbox wrapper once at cmdFunc construction
+	// time so its profile / argv work happens off the hot path.
+	sb := sandboxFor(sandboxParamsFor(rt, mounts, rootDir, runtimeBin))
+
+	// Default CWD inside the agent's workspace dir so tools that
+	// take relative paths (`cat ./foo`, `find . -type f`) resolve
+	// where the agent expects.
+	workspaceDir := filepath.Join(rootDir, "workspace")
+
 	return func(extraArgs ...string) Cmd {
-		c := executor.Command(runtimeBin, buildCmdArgs(rt, rootDir, extraArgs...)...)
+		argv := append([]string{runtimeBin}, buildCmdArgs(rt, rootDir, extraArgs...)...)
+		argv = sb.Wrap(argv)
+
+		c := executor.Command(argv[0], argv[1:]...)
 		c.SetStdout(stdout)
 		c.SetStderr(stderr)
-		c.SetEnv(buildCmdEnv(rt))
+		c.SetEnv(buildCmdEnv(rt, rootDir, mounts))
+		c.SetDir(workspaceDir)
 
 		return c
 	}

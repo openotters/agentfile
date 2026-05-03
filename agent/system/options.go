@@ -64,6 +64,13 @@ func withAgentHostFS(fs billy.Filesystem) AgentOption {
 	return func(a *Agent) { a.ws.hostFS = fs }
 }
 
+// withAgentSandboxKind plumbs the Provider's resolved sandbox impl
+// name ("sandbox-exec", "bwrap", "none") onto each agent's workspace
+// so WORKSPACE.md can stamp it. Wired internally by Provider.agentOpts.
+func withAgentSandboxKind(kind string) AgentOption {
+	return func(a *Agent) { a.ws.sandboxKind = kind }
+}
+
 // AgentOption configures an individual agent.
 type AgentOption func(*Agent)
 

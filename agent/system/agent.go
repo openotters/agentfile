@@ -265,7 +265,7 @@ func (a *Agent) initialize(ctx context.Context) error {
 		return err
 	}
 
-	a.cmdFn = a.proc.buildCmdFn(rt, a.fs.Root())
+	a.cmdFn = a.proc.buildCmdFn(rt, a.fs.Root(), a.ws.mounts)
 	a.rt = rt
 	a.initialized = true
 
@@ -288,7 +288,7 @@ func (a *Agent) markInitialized(rt *agent.AgentRuntime) {
 		a.addr = rt.Addr
 	}
 
-	a.cmdFn = a.proc.buildCmdFn(rt, a.fs.Root())
+	a.cmdFn = a.proc.buildCmdFn(rt, a.fs.Root(), a.ws.mounts)
 	a.rt = rt
 	a.initialized = true
 }

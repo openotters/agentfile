@@ -73,6 +73,41 @@ func (_c *MockCmd_SetEnv_Call) Return() *MockCmd_SetEnv_Call {
 	return _c
 }
 
+// SetDir provides a mock function for the type MockCmd
+func (_mock *MockCmd) SetDir(dir string) {
+	_mock.Called(dir)
+	return
+}
+
+// MockCmd_SetDir_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetDir'
+type MockCmd_SetDir_Call struct {
+	*mock.Call
+}
+
+// SetDir is a helper method to define mock.On call
+//   - dir string
+func (_e *MockCmd_Expecter) SetDir(dir interface{}) *MockCmd_SetDir_Call {
+	return &MockCmd_SetDir_Call{Call: _e.mock.On("SetDir", dir)}
+}
+
+func (_c *MockCmd_SetDir_Call) Run(run func(dir string)) *MockCmd_SetDir_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		run(
+			arg0,
+		)
+	})
+	return _c
+}
+
+func (_c *MockCmd_SetDir_Call) Return() *MockCmd_SetDir_Call {
+	_c.Call.Return()
+	return _c
+}
+
 func (_c *MockCmd_SetEnv_Call) RunAndReturn(run func(env []string)) *MockCmd_SetEnv_Call {
 	_c.Run(run)
 	return _c

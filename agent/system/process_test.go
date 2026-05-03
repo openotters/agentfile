@@ -2,7 +2,6 @@
 package system
 
 import (
-	"os"
 	"reflect"
 	"slices"
 	"testing"
@@ -113,28 +112,79 @@ func TestBuildCmdArgs_FullComposition(t *testing.T) {
 	}
 }
 
-// envDiff returns the entries that buildCmdEnv added on top of
-// os.Environ. The host's own ANTHROPIC_API_KEY (or whatever) is in the
-// baseline; we only care about what buildCmdEnv contributes. Asserting
-// against the diff keeps the tests stable regardless of the developer's
-// shell.
-func envDiff(t *testing.T, env []string) []string {
+// envHas asserts that env contains a `KEY=value` entry exactly.
+func envHas(t *testing.T, env []string, want string) {
 	t.Helper()
-
-	baseline := make(map[string]struct{}, len(os.Environ()))
-	for _, e := range os.Environ() {
-		baseline[e] = struct{}{}
+	if !slices.Contains(env, want) {
+		t.Errorf("env missing %q; got %v", want, env)
 	}
+}
 
-	diff := make([]string, 0)
-
+// envHasKey asserts that env contains an entry starting with "KEY=".
+// Used when the value is constructed (e.g. paths) and only the key
+// matters.
+func envHasKey(t *testing.T, env []string, key string) {
+	t.Helper()
+	prefix := key + "="
 	for _, e := range env {
-		if _, present := baseline[e]; !present {
-			diff = append(diff, e)
+		if hasPrefix(e, prefix) {
+			return
 		}
 	}
+	t.Errorf("env missing key %q; got %v", key, env)
+}
 
-	return diff
+// envHasNoKey asserts that env contains no entry starting with "KEY=".
+func envHasNoKey(t *testing.T, env []string, key string) {
+	t.Helper()
+	prefix := key + "="
+	for _, e := range env {
+		if hasPrefix(e, prefix) {
+			t.Errorf("env unexpectedly has %q; got %v", e, env)
+			return
+		}
+	}
+}
+
+func TestBuildCmdEnv_LockedBaseAlwaysPresent(t *testing.T) {
+	t.Parallel()
+
+	// Every spawn gets PATH / HOME / XDG_* / TMPDIR / LANG /
+	// OTTERS_AGENT_ROOT / OTTERS_MOUNTS — the curated locked-down
+	// env. The host's PATH / HOME / arbitrary env vars stay on the
+	// host; the runtime sees only this list (plus per-provider
+	// credentials).
+	env := buildCmdEnv(&agent.AgentRuntime{
+		ResolvedConfig: agent.ResolvedConfig{Model: "anthropic/m"},
+	}, "/agents/abc", nil)
+
+	envHas(t, env, "PATH=/agents/abc/usr/bin")
+	envHas(t, env, "HOME=/agents/abc/home")
+	envHas(t, env, "XDG_CONFIG_HOME=/agents/abc/home/.config")
+	envHas(t, env, "XDG_CACHE_HOME=/agents/abc/home/.cache")
+	envHas(t, env, "XDG_DATA_HOME=/agents/abc/home/.local/share")
+	envHas(t, env, "TMPDIR=/agents/abc/tmp")
+	envHas(t, env, "LANG=C.UTF-8")
+	envHas(t, env, "OTTERS_AGENT_ROOT=/agents/abc")
+	envHas(t, env, "OTTERS_MOUNTS=[]")
+}
+
+func TestBuildCmdEnv_DoesNotInheritHostEnv(t *testing.T) {
+	// No t.Parallel — we mutate the test process's env via Setenv,
+	// which testing.T forbids in parallel tests.
+
+	// Spike a host env var that the locked-down env explicitly
+	// does NOT include. If the implementation regresses to
+	// os.Environ inheritance, this canary will fail.
+	t.Setenv("OTTERS_TEST_HOST_CANARY", "leaked")
+
+	env := buildCmdEnv(&agent.AgentRuntime{
+		ResolvedConfig: agent.ResolvedConfig{Model: "anthropic/m"},
+	}, "/r", nil)
+
+	envHasNoKey(t, env, "OTTERS_TEST_HOST_CANARY")
+	// Common host-only env vars also shouldn't leak.
+	envHasNoKey(t, env, "SSH_AUTH_SOCK")
 }
 
 func TestBuildCmdEnv_EmitsProviderCredentials(t *testing.T) {
@@ -148,24 +198,10 @@ func TestBuildCmdEnv_EmitsProviderCredentials(t *testing.T) {
 		},
 	}
 
-	env := buildCmdEnv(rt)
-	diff := envDiff(t, env)
+	env := buildCmdEnv(rt, "/r", nil)
 
-	want := []string{
-		"ANTHROPIC_API_KEY=sk-test-fixture-not-real",
-		"ANTHROPIC_API_BASE=https://api.anthropic.com",
-	}
-	for _, w := range want {
-		if !slices.Contains(diff, w) {
-			t.Errorf("envDiff missing %q; got %v", w, diff)
-		}
-	}
-
-	// Inheritance check: env must be ≥ os.Environ in length.
-	if len(env) < len(os.Environ()) {
-		t.Errorf("buildCmdEnv truncated host env: got %d entries, host has %d",
-			len(env), len(os.Environ()))
-	}
+	envHas(t, env, "ANTHROPIC_API_KEY=sk-test-fixture-not-real")
+	envHas(t, env, "ANTHROPIC_API_BASE=https://api.anthropic.com")
 }
 
 func TestBuildCmdEnv_OmitsAbsentFields(t *testing.T) {
@@ -179,17 +215,17 @@ func TestBuildCmdEnv_OmitsAbsentFields(t *testing.T) {
 		{
 			name:        "no key",
 			rt:          &agent.AgentRuntime{ResolvedConfig: agent.ResolvedConfig{Model: "anthropic/m", APIBase: "https://x"}},
-			mustNotHave: []string{"ANTHROPIC_API_KEY="},
+			mustNotHave: []string{"ANTHROPIC_API_KEY"},
 		},
 		{
 			name:        "no base",
 			rt:          &agent.AgentRuntime{ResolvedConfig: agent.ResolvedConfig{Model: "anthropic/m", APIKey: "k"}},
-			mustNotHave: []string{"ANTHROPIC_API_BASE="},
+			mustNotHave: []string{"ANTHROPIC_API_BASE"},
 		},
 		{
 			name:        "neither",
 			rt:          &agent.AgentRuntime{ResolvedConfig: agent.ResolvedConfig{Model: "anthropic/m"}},
-			mustNotHave: []string{"ANTHROPIC_API_KEY=", "ANTHROPIC_API_BASE="},
+			mustNotHave: []string{"ANTHROPIC_API_KEY", "ANTHROPIC_API_BASE"},
 		},
 	}
 
@@ -197,14 +233,9 @@ func TestBuildCmdEnv_OmitsAbsentFields(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			diff := envDiff(t, buildCmdEnv(tc.rt))
-
-			for _, prefix := range tc.mustNotHave {
-				for _, e := range diff {
-					if hasPrefix(e, prefix) {
-						t.Errorf("envDiff added %q; expected nothing matching %q", e, prefix)
-					}
-				}
+			env := buildCmdEnv(tc.rt, "/r", nil)
+			for _, key := range tc.mustNotHave {
+				envHasNoKey(t, env, key)
 			}
 		})
 	}
@@ -213,18 +244,25 @@ func TestBuildCmdEnv_OmitsAbsentFields(t *testing.T) {
 func TestBuildCmdEnv_NoProviderInModel(t *testing.T) {
 	t.Parallel()
 
-	// A bare model name (no "provider/") yields no added entries —
-	// the provider prefix is what scopes the env names.
-	diff := envDiff(t, buildCmdEnv(&agent.AgentRuntime{
+	// A bare model name (no "provider/") yields no provider-scoped
+	// credential entries — but the locked-down base env is still
+	// fully present.
+	env := buildCmdEnv(&agent.AgentRuntime{
 		ResolvedConfig: agent.ResolvedConfig{
 			Model:   "bare-name",
 			APIKey:  "k",
 			APIBase: "https://x",
 		},
-	}))
+	}, "/r", nil)
 
-	if len(diff) != 0 {
-		t.Errorf("envDiff = %v, want empty", diff)
+	envHasKey(t, env, "PATH")
+	envHasKey(t, env, "HOME")
+	envHasKey(t, env, "OTTERS_AGENT_ROOT")
+	// No provider prefix → no API_KEY / API_BASE entries.
+	for _, e := range env {
+		if hasPrefix(e, "BARE") || hasPrefix(e, "_API_KEY=") || hasPrefix(e, "_API_BASE=") {
+			t.Errorf("unexpected provider-style entry %q", e)
+		}
 	}
 }
 

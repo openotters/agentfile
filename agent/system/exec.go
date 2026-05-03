@@ -30,6 +30,12 @@ type Cmd interface {
 	SetStdout(w io.Writer)
 	SetStderr(w io.Writer)
 	SetEnv(env []string)
+	// SetDir sets the working directory for the spawned process.
+	// Empty string keeps the parent's CWD. Used by process.serve to
+	// chdir into <agent-root>/workspace before spawn so tools that
+	// take relative paths (`cat ./foo`, `find . -type f`) resolve
+	// inside the agent root regardless of where ottersd was started.
+	SetDir(dir string)
 }
 
 // defaultExecutor is the production Executor: builds real
@@ -63,3 +69,4 @@ func (c *osCmd) Signal(sig os.Signal) error {
 func (c *osCmd) SetStdout(w io.Writer) { c.cmd.Stdout = w }
 func (c *osCmd) SetStderr(w io.Writer) { c.cmd.Stderr = w }
 func (c *osCmd) SetEnv(env []string)   { c.cmd.Env = env }
+func (c *osCmd) SetDir(dir string)     { c.cmd.Dir = dir }
