@@ -29,6 +29,13 @@ type process struct {
 	cancel context.CancelFunc
 }
 
+// defaultExecVerb is the runtime subcommand the executor uses when an
+// agent's spec doesn't override `Exec`. The runtime CLI registers
+// `serve` (long-running gRPC server) as the only mode for spawned
+// agents — everything else (`prompt`, `chat`) is wired through the
+// gRPC API instead.
+const defaultExecVerb = "serve"
+
 // buildCmdArgs returns the full argv slice passed to the runtime
 // binary, given the resolved runtime config and any caller-specified
 // extra args. Credentials (api-key, api-base) are intentionally NOT
@@ -37,7 +44,7 @@ type process struct {
 func buildCmdArgs(rt *executor.Runtime, rootDir string, extraArgs ...string) []string {
 	execArgs := rt.Exec
 	if len(execArgs) == 0 {
-		execArgs = []string{"serve"}
+		execArgs = []string{defaultExecVerb}
 	}
 
 	args := append([]string{}, execArgs...)
