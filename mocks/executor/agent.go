@@ -2,7 +2,7 @@
 // github.com/vektra/mockery
 // template: testify
 
-package mockagent
+package mockexecutor
 
 import (
 	"context"
@@ -228,8 +228,8 @@ func (_c *MockAgent_Runtime_Call) Run(run func()) *MockAgent_Runtime_Call {
 	return _c
 }
 
-func (_c *MockAgent_Runtime_Call) Return(agentRuntime *executor.Runtime) *MockAgent_Runtime_Call {
-	_c.Call.Return(agentRuntime)
+func (_c *MockAgent_Runtime_Call) Return(runtime *executor.Runtime) *MockAgent_Runtime_Call {
+	_c.Call.Return(runtime)
 	return _c
 }
 

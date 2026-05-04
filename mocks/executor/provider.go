@@ -2,7 +2,7 @@
 // github.com/vektra/mockery
 // template: testify
 
-package mockagent
+package mockexecutor
 
 import (
 	"context"
@@ -119,8 +119,8 @@ func (_c *MockProvider_Create_Call) Run(run func(ctx context.Context, id uuid.UU
 	return _c
 }
 
-func (_c *MockProvider_Create_Call) Return(agent1 executor.Agent, err error) *MockProvider_Create_Call {
-	_c.Call.Return(agent1, err)
+func (_c *MockProvider_Create_Call) Return(agent executor.Agent, err error) *MockProvider_Create_Call {
+	_c.Call.Return(agent, err)
 	return _c
 }
 

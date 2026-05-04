@@ -2,7 +2,7 @@
 // github.com/vektra/mockery
 // template: testify
 
-package mockagent
+package mockexecutor
 
 import (
 	"github.com/openotters/agentfile/executor"
