@@ -8,7 +8,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/openotters/agentfile/agent"
+	"github.com/openotters/agentfile/executor"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -193,19 +193,19 @@ func (_c *MockAgent_Run_Call) RunAndReturn(run func(ctx context.Context) error) 
 }
 
 // Runtime provides a mock function for the type MockAgent
-func (_mock *MockAgent) Runtime() *agent.AgentRuntime {
+func (_mock *MockAgent) Runtime() *executor.Runtime {
 	ret := _mock.Called()
 
 	if len(ret) == 0 {
 		panic("no return value specified for Runtime")
 	}
 
-	var r0 *agent.AgentRuntime
-	if returnFunc, ok := ret.Get(0).(func() *agent.AgentRuntime); ok {
+	var r0 *executor.Runtime
+	if returnFunc, ok := ret.Get(0).(func() *executor.Runtime); ok {
 		r0 = returnFunc()
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*agent.AgentRuntime)
+			r0 = ret.Get(0).(*executor.Runtime)
 		}
 	}
 	return r0
@@ -228,12 +228,12 @@ func (_c *MockAgent_Runtime_Call) Run(run func()) *MockAgent_Runtime_Call {
 	return _c
 }
 
-func (_c *MockAgent_Runtime_Call) Return(agentRuntime *agent.AgentRuntime) *MockAgent_Runtime_Call {
+func (_c *MockAgent_Runtime_Call) Return(agentRuntime *executor.Runtime) *MockAgent_Runtime_Call {
 	_c.Call.Return(agentRuntime)
 	return _c
 }
 
-func (_c *MockAgent_Runtime_Call) RunAndReturn(run func() *agent.AgentRuntime) *MockAgent_Runtime_Call {
+func (_c *MockAgent_Runtime_Call) RunAndReturn(run func() *executor.Runtime) *MockAgent_Runtime_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -290,18 +290,18 @@ func (_c *MockAgent_Start_Call) RunAndReturn(run func(ctx context.Context) error
 }
 
 // Status provides a mock function for the type MockAgent
-func (_mock *MockAgent) Status() agent.Status {
+func (_mock *MockAgent) Status() executor.Status {
 	ret := _mock.Called()
 
 	if len(ret) == 0 {
 		panic("no return value specified for Status")
 	}
 
-	var r0 agent.Status
-	if returnFunc, ok := ret.Get(0).(func() agent.Status); ok {
+	var r0 executor.Status
+	if returnFunc, ok := ret.Get(0).(func() executor.Status); ok {
 		r0 = returnFunc()
 	} else {
-		r0 = ret.Get(0).(agent.Status)
+		r0 = ret.Get(0).(executor.Status)
 	}
 	return r0
 }
@@ -323,12 +323,12 @@ func (_c *MockAgent_Status_Call) Run(run func()) *MockAgent_Status_Call {
 	return _c
 }
 
-func (_c *MockAgent_Status_Call) Return(status agent.Status) *MockAgent_Status_Call {
+func (_c *MockAgent_Status_Call) Return(status executor.Status) *MockAgent_Status_Call {
 	_c.Call.Return(status)
 	return _c
 }
 
-func (_c *MockAgent_Status_Call) RunAndReturn(run func() agent.Status) *MockAgent_Status_Call {
+func (_c *MockAgent_Status_Call) RunAndReturn(run func() executor.Status) *MockAgent_Status_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -385,23 +385,23 @@ func (_c *MockAgent_Stop_Call) RunAndReturn(run func(ctx context.Context) error)
 }
 
 // SubscribeStatus provides a mock function for the type MockAgent
-func (_mock *MockAgent) SubscribeStatus() (<-chan agent.Status, func()) {
+func (_mock *MockAgent) SubscribeStatus() (<-chan executor.Status, func()) {
 	ret := _mock.Called()
 
 	if len(ret) == 0 {
 		panic("no return value specified for SubscribeStatus")
 	}
 
-	var r0 <-chan agent.Status
+	var r0 <-chan executor.Status
 	var r1 func()
-	if returnFunc, ok := ret.Get(0).(func() (<-chan agent.Status, func())); ok {
+	if returnFunc, ok := ret.Get(0).(func() (<-chan executor.Status, func())); ok {
 		return returnFunc()
 	}
-	if returnFunc, ok := ret.Get(0).(func() <-chan agent.Status); ok {
+	if returnFunc, ok := ret.Get(0).(func() <-chan executor.Status); ok {
 		r0 = returnFunc()
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(<-chan agent.Status)
+			r0 = ret.Get(0).(<-chan executor.Status)
 		}
 	}
 	if returnFunc, ok := ret.Get(1).(func() func()); ok {
@@ -431,12 +431,12 @@ func (_c *MockAgent_SubscribeStatus_Call) Run(run func()) *MockAgent_SubscribeSt
 	return _c
 }
 
-func (_c *MockAgent_SubscribeStatus_Call) Return(statusCh <-chan agent.Status, fn func()) *MockAgent_SubscribeStatus_Call {
+func (_c *MockAgent_SubscribeStatus_Call) Return(statusCh <-chan executor.Status, fn func()) *MockAgent_SubscribeStatus_Call {
 	_c.Call.Return(statusCh, fn)
 	return _c
 }
 
-func (_c *MockAgent_SubscribeStatus_Call) RunAndReturn(run func() (<-chan agent.Status, func())) *MockAgent_SubscribeStatus_Call {
+func (_c *MockAgent_SubscribeStatus_Call) RunAndReturn(run func() (<-chan executor.Status, func())) *MockAgent_SubscribeStatus_Call {
 	_c.Call.Return(run)
 	return _c
 }

@@ -7,7 +7,7 @@ package mockagent
 import (
 	"context"
 
-	"github.com/openotters/agentfile/agent"
+	"github.com/openotters/agentfile/executor"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -39,23 +39,23 @@ func (_m *MockSessionReader) EXPECT() *MockSessionReader_Expecter {
 }
 
 // ListSessionMessages provides a mock function for the type MockSessionReader
-func (_mock *MockSessionReader) ListSessionMessages(ctx context.Context, sessionID string, limit int) ([]agent.SessionMessage, error) {
+func (_mock *MockSessionReader) ListSessionMessages(ctx context.Context, sessionID string, limit int) ([]executor.SessionMessage, error) {
 	ret := _mock.Called(ctx, sessionID, limit)
 
 	if len(ret) == 0 {
 		panic("no return value specified for ListSessionMessages")
 	}
 
-	var r0 []agent.SessionMessage
+	var r0 []executor.SessionMessage
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, int) ([]agent.SessionMessage, error)); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, int) ([]executor.SessionMessage, error)); ok {
 		return returnFunc(ctx, sessionID, limit)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, int) []agent.SessionMessage); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, int) []executor.SessionMessage); ok {
 		r0 = returnFunc(ctx, sessionID, limit)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).([]agent.SessionMessage)
+			r0 = ret.Get(0).([]executor.SessionMessage)
 		}
 	}
 	if returnFunc, ok := ret.Get(1).(func(context.Context, string, int) error); ok {
@@ -102,12 +102,12 @@ func (_c *MockSessionReader_ListSessionMessages_Call) Run(run func(ctx context.C
 	return _c
 }
 
-func (_c *MockSessionReader_ListSessionMessages_Call) Return(sessionMessages []agent.SessionMessage, err error) *MockSessionReader_ListSessionMessages_Call {
+func (_c *MockSessionReader_ListSessionMessages_Call) Return(sessionMessages []executor.SessionMessage, err error) *MockSessionReader_ListSessionMessages_Call {
 	_c.Call.Return(sessionMessages, err)
 	return _c
 }
 
-func (_c *MockSessionReader_ListSessionMessages_Call) RunAndReturn(run func(ctx context.Context, sessionID string, limit int) ([]agent.SessionMessage, error)) *MockSessionReader_ListSessionMessages_Call {
+func (_c *MockSessionReader_ListSessionMessages_Call) RunAndReturn(run func(ctx context.Context, sessionID string, limit int) ([]executor.SessionMessage, error)) *MockSessionReader_ListSessionMessages_Call {
 	_c.Call.Return(run)
 	return _c
 }

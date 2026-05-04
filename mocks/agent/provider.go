@@ -8,7 +8,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/openotters/agentfile/agent"
+	"github.com/openotters/agentfile/executor"
 	"github.com/openotters/agentfile/spec"
 	mock "github.com/stretchr/testify/mock"
 )
@@ -41,7 +41,7 @@ func (_m *MockProvider) EXPECT() *MockProvider_Expecter {
 }
 
 // Create provides a mock function for the type MockProvider
-func (_mock *MockProvider) Create(ctx context.Context, id uuid.UUID, ref spec.Reference, opts ...spec.Override) (agent.Agent, error) {
+func (_mock *MockProvider) Create(ctx context.Context, id uuid.UUID, ref spec.Reference, opts ...spec.Override) (executor.Agent, error) {
 	var tmpRet mock.Arguments
 	if len(opts) > 0 {
 		tmpRet = _mock.Called(ctx, id, ref, opts)
@@ -54,16 +54,16 @@ func (_mock *MockProvider) Create(ctx context.Context, id uuid.UUID, ref spec.Re
 		panic("no return value specified for Create")
 	}
 
-	var r0 agent.Agent
+	var r0 executor.Agent
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, uuid.UUID, spec.Reference, ...spec.Override) (agent.Agent, error)); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uuid.UUID, spec.Reference, ...spec.Override) (executor.Agent, error)); ok {
 		return returnFunc(ctx, id, ref, opts...)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, uuid.UUID, spec.Reference, ...spec.Override) agent.Agent); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uuid.UUID, spec.Reference, ...spec.Override) executor.Agent); ok {
 		r0 = returnFunc(ctx, id, ref, opts...)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(agent.Agent)
+			r0 = ret.Get(0).(executor.Agent)
 		}
 	}
 	if returnFunc, ok := ret.Get(1).(func(context.Context, uuid.UUID, spec.Reference, ...spec.Override) error); ok {
@@ -119,12 +119,12 @@ func (_c *MockProvider_Create_Call) Run(run func(ctx context.Context, id uuid.UU
 	return _c
 }
 
-func (_c *MockProvider_Create_Call) Return(agent1 agent.Agent, err error) *MockProvider_Create_Call {
+func (_c *MockProvider_Create_Call) Return(agent1 executor.Agent, err error) *MockProvider_Create_Call {
 	_c.Call.Return(agent1, err)
 	return _c
 }
 
-func (_c *MockProvider_Create_Call) RunAndReturn(run func(ctx context.Context, id uuid.UUID, ref spec.Reference, opts ...spec.Override) (agent.Agent, error)) *MockProvider_Create_Call {
+func (_c *MockProvider_Create_Call) RunAndReturn(run func(ctx context.Context, id uuid.UUID, ref spec.Reference, opts ...spec.Override) (executor.Agent, error)) *MockProvider_Create_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -181,23 +181,23 @@ func (_c *MockProvider_Destroy_Call) RunAndReturn(run func(ctx context.Context) 
 }
 
 // Load provides a mock function for the type MockProvider
-func (_mock *MockProvider) Load(ctx context.Context) ([]agent.Agent, error) {
+func (_mock *MockProvider) Load(ctx context.Context) ([]executor.Agent, error) {
 	ret := _mock.Called(ctx)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Load")
 	}
 
-	var r0 []agent.Agent
+	var r0 []executor.Agent
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context) ([]agent.Agent, error)); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context) ([]executor.Agent, error)); ok {
 		return returnFunc(ctx)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context) []agent.Agent); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context) []executor.Agent); ok {
 		r0 = returnFunc(ctx)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).([]agent.Agent)
+			r0 = ret.Get(0).([]executor.Agent)
 		}
 	}
 	if returnFunc, ok := ret.Get(1).(func(context.Context) error); ok {
@@ -232,12 +232,12 @@ func (_c *MockProvider_Load_Call) Run(run func(ctx context.Context)) *MockProvid
 	return _c
 }
 
-func (_c *MockProvider_Load_Call) Return(agents []agent.Agent, err error) *MockProvider_Load_Call {
+func (_c *MockProvider_Load_Call) Return(agents []executor.Agent, err error) *MockProvider_Load_Call {
 	_c.Call.Return(agents, err)
 	return _c
 }
 
-func (_c *MockProvider_Load_Call) RunAndReturn(run func(ctx context.Context) ([]agent.Agent, error)) *MockProvider_Load_Call {
+func (_c *MockProvider_Load_Call) RunAndReturn(run func(ctx context.Context) ([]executor.Agent, error)) *MockProvider_Load_Call {
 	_c.Call.Return(run)
 	return _c
 }

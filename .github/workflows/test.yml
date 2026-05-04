@@ -2,15 +2,16 @@ name: test
 
 # Runs `go test -race -cover` on every PR and push to main, then
 # enforces a coverage floor on the public-API packages (spec, build,
-# resolve, export, oci, store, validate, model, agent, agent/system).
+# resolve, export, oci, store, validate, model, executor,
+# executor/system).
 # Excluded from the floor:
-#   - agent/api/v1  — protoc-generated; conventionally skipped.
-#   - examples/*    — runnable demos, no production callers.
-#   - internal/*    — not part of the public API; private helpers.
-#   - mocks/*       — mockery-generated; testing the mock generator's
-#                     output is mockery's job, not ours.
+#   - executor/api/v1 — protoc-generated; conventionally skipped.
+#   - examples/*      — runnable demos, no production callers.
+#   - internal/*      — not part of the public API; private helpers.
+#   - mocks/*         — mockery-generated; testing the mock generator's
+#                       output is mockery's job, not ours.
 #
-# agent/system used to live in this list alongside agent/api/v1 while
+# executor/system used to live in this list alongside executor/api/v1 while
 # its subprocess + gRPC-client layers were untestable. The
 # Executor / LoopbackAllocator / HostFS / Dialer seams unblocked that;
 # the package now sits at ~66% and counts toward the global floor.
@@ -61,7 +62,7 @@ jobs:
         # pattern for the "mode:" header line, which would fail the
         # workflow. Use an explicit awk filter instead.
         run: |
-          awk 'NR==1 || !/agent\/api\/v1|examples\/|\/internal|\/mocks\//' \
+          awk 'NR==1 || !/executor\/api\/v1|examples\/|\/internal|\/mocks\//' \
             coverage.out > coverage.core.out
           total=$(go tool cover -func=coverage.core.out | awk '/^total:/ {print $3}' | tr -d %)
           echo "public API coverage: ${total}%"
@@ -70,7 +71,7 @@ jobs:
       - name: Enforce coverage threshold
         env:
           # 75% reflects the post-seam state: every public-API
-          # package is in scope, agent/system included. The
+          # package is in scope, executor/system included. The
           # lifecycle methods (Run / Start / Stop / Remove /
           # initialize) still need integration-level tests — that
           # work is what pushes the floor upward.

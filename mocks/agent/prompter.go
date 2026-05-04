@@ -8,7 +8,7 @@ import (
 	"context"
 	"io"
 
-	"github.com/openotters/agentfile/agent"
+	"github.com/openotters/agentfile/executor"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -40,7 +40,7 @@ func (_m *MockPrompter) EXPECT() *MockPrompter_Expecter {
 }
 
 // Prompt provides a mock function for the type MockPrompter
-func (_mock *MockPrompter) Prompt(ctx context.Context, req agent.PromptRequest, w io.Writer) error {
+func (_mock *MockPrompter) Prompt(ctx context.Context, req executor.PromptRequest, w io.Writer) error {
 	ret := _mock.Called(ctx, req, w)
 
 	if len(ret) == 0 {
@@ -48,7 +48,7 @@ func (_mock *MockPrompter) Prompt(ctx context.Context, req agent.PromptRequest, 
 	}
 
 	var r0 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, agent.PromptRequest, io.Writer) error); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, executor.PromptRequest, io.Writer) error); ok {
 		r0 = returnFunc(ctx, req, w)
 	} else {
 		r0 = ret.Error(0)
@@ -63,21 +63,21 @@ type MockPrompter_Prompt_Call struct {
 
 // Prompt is a helper method to define mock.On call
 //   - ctx context.Context
-//   - req agent.PromptRequest
+//   - req executor.PromptRequest
 //   - w io.Writer
 func (_e *MockPrompter_Expecter) Prompt(ctx interface{}, req interface{}, w interface{}) *MockPrompter_Prompt_Call {
 	return &MockPrompter_Prompt_Call{Call: _e.mock.On("Prompt", ctx, req, w)}
 }
 
-func (_c *MockPrompter_Prompt_Call) Run(run func(ctx context.Context, req agent.PromptRequest, w io.Writer)) *MockPrompter_Prompt_Call {
+func (_c *MockPrompter_Prompt_Call) Run(run func(ctx context.Context, req executor.PromptRequest, w io.Writer)) *MockPrompter_Prompt_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
 			arg0 = args[0].(context.Context)
 		}
-		var arg1 agent.PromptRequest
+		var arg1 executor.PromptRequest
 		if args[1] != nil {
-			arg1 = args[1].(agent.PromptRequest)
+			arg1 = args[1].(executor.PromptRequest)
 		}
 		var arg2 io.Writer
 		if args[2] != nil {
@@ -97,7 +97,7 @@ func (_c *MockPrompter_Prompt_Call) Return(err error) *MockPrompter_Prompt_Call 
 	return _c
 }
 
-func (_c *MockPrompter_Prompt_Call) RunAndReturn(run func(ctx context.Context, req agent.PromptRequest, w io.Writer) error) *MockPrompter_Prompt_Call {
+func (_c *MockPrompter_Prompt_Call) RunAndReturn(run func(ctx context.Context, req executor.PromptRequest, w io.Writer) error) *MockPrompter_Prompt_Call {
 	_c.Call.Return(run)
 	return _c
 }

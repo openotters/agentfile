@@ -27,7 +27,7 @@ pkgname: "mock{{.SrcPackageName}}"
 structname: "Mock{{.InterfaceName}}"
 
 packages:
-  github.com/openotters/agentfile/agent:
+  github.com/openotters/agentfile/executor:
     interfaces:
       Agent:
       Provider:
@@ -36,9 +36,9 @@ packages:
       ObjectPrompter:
       SessionReader:
       StatusObserver:
-  github.com/openotters/agentfile/agent/system:
+  github.com/openotters/agentfile/executor/system:
     interfaces:
       LoopbackAllocator:
-      Executor:
+      Spawner:
       Cmd:
       Dialer:

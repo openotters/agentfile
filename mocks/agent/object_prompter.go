@@ -7,7 +7,7 @@ package mockagent
 import (
 	"context"
 
-	"github.com/openotters/agentfile/agent"
+	"github.com/openotters/agentfile/executor"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -39,7 +39,7 @@ func (_m *MockObjectPrompter) EXPECT() *MockObjectPrompter_Expecter {
 }
 
 // PromptObject provides a mock function for the type MockObjectPrompter
-func (_mock *MockObjectPrompter) PromptObject(ctx context.Context, req agent.ObjectPromptRequest) ([]byte, error) {
+func (_mock *MockObjectPrompter) PromptObject(ctx context.Context, req executor.ObjectPromptRequest) ([]byte, error) {
 	ret := _mock.Called(ctx, req)
 
 	if len(ret) == 0 {
@@ -48,17 +48,17 @@ func (_mock *MockObjectPrompter) PromptObject(ctx context.Context, req agent.Obj
 
 	var r0 []byte
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, agent.ObjectPromptRequest) ([]byte, error)); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, executor.ObjectPromptRequest) ([]byte, error)); ok {
 		return returnFunc(ctx, req)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, agent.ObjectPromptRequest) []byte); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, executor.ObjectPromptRequest) []byte); ok {
 		r0 = returnFunc(ctx, req)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).([]byte)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, agent.ObjectPromptRequest) error); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, executor.ObjectPromptRequest) error); ok {
 		r1 = returnFunc(ctx, req)
 	} else {
 		r1 = ret.Error(1)
@@ -73,20 +73,20 @@ type MockObjectPrompter_PromptObject_Call struct {
 
 // PromptObject is a helper method to define mock.On call
 //   - ctx context.Context
-//   - req agent.ObjectPromptRequest
+//   - req executor.ObjectPromptRequest
 func (_e *MockObjectPrompter_Expecter) PromptObject(ctx interface{}, req interface{}) *MockObjectPrompter_PromptObject_Call {
 	return &MockObjectPrompter_PromptObject_Call{Call: _e.mock.On("PromptObject", ctx, req)}
 }
 
-func (_c *MockObjectPrompter_PromptObject_Call) Run(run func(ctx context.Context, req agent.ObjectPromptRequest)) *MockObjectPrompter_PromptObject_Call {
+func (_c *MockObjectPrompter_PromptObject_Call) Run(run func(ctx context.Context, req executor.ObjectPromptRequest)) *MockObjectPrompter_PromptObject_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
 			arg0 = args[0].(context.Context)
 		}
-		var arg1 agent.ObjectPromptRequest
+		var arg1 executor.ObjectPromptRequest
 		if args[1] != nil {
-			arg1 = args[1].(agent.ObjectPromptRequest)
+			arg1 = args[1].(executor.ObjectPromptRequest)
 		}
 		run(
 			arg0,
@@ -101,7 +101,7 @@ func (_c *MockObjectPrompter_PromptObject_Call) Return(bytes []byte, err error) 
 	return _c
 }
 
-func (_c *MockObjectPrompter_PromptObject_Call) RunAndReturn(run func(ctx context.Context, req agent.ObjectPromptRequest) ([]byte, error)) *MockObjectPrompter_PromptObject_Call {
+func (_c *MockObjectPrompter_PromptObject_Call) RunAndReturn(run func(ctx context.Context, req executor.ObjectPromptRequest) ([]byte, error)) *MockObjectPrompter_PromptObject_Call {
 	_c.Call.Return(run)
 	return _c
 }

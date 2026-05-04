@@ -18,7 +18,7 @@ import (
 	"github.com/google/uuid"
 	"oras.land/oras-go/v2/content/memory"
 
-	"github.com/openotters/agentfile/agent/system"
+	"github.com/openotters/agentfile/executor/system"
 	"github.com/openotters/agentfile/build"
 	"github.com/openotters/agentfile/oci"
 	"github.com/openotters/agentfile/spec"

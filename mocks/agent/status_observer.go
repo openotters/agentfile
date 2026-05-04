@@ -5,7 +5,7 @@
 package mockagent
 
 import (
-	"github.com/openotters/agentfile/agent"
+	"github.com/openotters/agentfile/executor"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -37,18 +37,18 @@ func (_m *MockStatusObserver) EXPECT() *MockStatusObserver_Expecter {
 }
 
 // Status provides a mock function for the type MockStatusObserver
-func (_mock *MockStatusObserver) Status() agent.Status {
+func (_mock *MockStatusObserver) Status() executor.Status {
 	ret := _mock.Called()
 
 	if len(ret) == 0 {
 		panic("no return value specified for Status")
 	}
 
-	var r0 agent.Status
-	if returnFunc, ok := ret.Get(0).(func() agent.Status); ok {
+	var r0 executor.Status
+	if returnFunc, ok := ret.Get(0).(func() executor.Status); ok {
 		r0 = returnFunc()
 	} else {
-		r0 = ret.Get(0).(agent.Status)
+		r0 = ret.Get(0).(executor.Status)
 	}
 	return r0
 }
@@ -70,34 +70,34 @@ func (_c *MockStatusObserver_Status_Call) Run(run func()) *MockStatusObserver_St
 	return _c
 }
 
-func (_c *MockStatusObserver_Status_Call) Return(status agent.Status) *MockStatusObserver_Status_Call {
+func (_c *MockStatusObserver_Status_Call) Return(status executor.Status) *MockStatusObserver_Status_Call {
 	_c.Call.Return(status)
 	return _c
 }
 
-func (_c *MockStatusObserver_Status_Call) RunAndReturn(run func() agent.Status) *MockStatusObserver_Status_Call {
+func (_c *MockStatusObserver_Status_Call) RunAndReturn(run func() executor.Status) *MockStatusObserver_Status_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // SubscribeStatus provides a mock function for the type MockStatusObserver
-func (_mock *MockStatusObserver) SubscribeStatus() (<-chan agent.Status, func()) {
+func (_mock *MockStatusObserver) SubscribeStatus() (<-chan executor.Status, func()) {
 	ret := _mock.Called()
 
 	if len(ret) == 0 {
 		panic("no return value specified for SubscribeStatus")
 	}
 
-	var r0 <-chan agent.Status
+	var r0 <-chan executor.Status
 	var r1 func()
-	if returnFunc, ok := ret.Get(0).(func() (<-chan agent.Status, func())); ok {
+	if returnFunc, ok := ret.Get(0).(func() (<-chan executor.Status, func())); ok {
 		return returnFunc()
 	}
-	if returnFunc, ok := ret.Get(0).(func() <-chan agent.Status); ok {
+	if returnFunc, ok := ret.Get(0).(func() <-chan executor.Status); ok {
 		r0 = returnFunc()
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(<-chan agent.Status)
+			r0 = ret.Get(0).(<-chan executor.Status)
 		}
 	}
 	if returnFunc, ok := ret.Get(1).(func() func()); ok {
@@ -127,12 +127,12 @@ func (_c *MockStatusObserver_SubscribeStatus_Call) Run(run func()) *MockStatusOb
 	return _c
 }
 
-func (_c *MockStatusObserver_SubscribeStatus_Call) Return(statusCh <-chan agent.Status, fn func()) *MockStatusObserver_SubscribeStatus_Call {
+func (_c *MockStatusObserver_SubscribeStatus_Call) Return(statusCh <-chan executor.Status, fn func()) *MockStatusObserver_SubscribeStatus_Call {
 	_c.Call.Return(statusCh, fn)
 	return _c
 }
 
-func (_c *MockStatusObserver_SubscribeStatus_Call) RunAndReturn(run func() (<-chan agent.Status, func())) *MockStatusObserver_SubscribeStatus_Call {
+func (_c *MockStatusObserver_SubscribeStatus_Call) RunAndReturn(run func() (<-chan executor.Status, func())) *MockStatusObserver_SubscribeStatus_Call {
 	_c.Call.Return(run)
 	return _c
 }

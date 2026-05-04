@@ -7,7 +7,7 @@ package mockagent
 import (
 	"context"
 
-	"github.com/openotters/agentfile/agent"
+	"github.com/openotters/agentfile/executor"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -39,7 +39,7 @@ func (_m *MockStreamPrompter) EXPECT() *MockStreamPrompter_Expecter {
 }
 
 // PromptStream provides a mock function for the type MockStreamPrompter
-func (_mock *MockStreamPrompter) PromptStream(ctx context.Context, req agent.PromptRequest, cb func(agent.PromptEvent)) error {
+func (_mock *MockStreamPrompter) PromptStream(ctx context.Context, req executor.PromptRequest, cb func(executor.PromptEvent)) error {
 	ret := _mock.Called(ctx, req, cb)
 
 	if len(ret) == 0 {
@@ -47,7 +47,7 @@ func (_mock *MockStreamPrompter) PromptStream(ctx context.Context, req agent.Pro
 	}
 
 	var r0 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, agent.PromptRequest, func(agent.PromptEvent)) error); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, executor.PromptRequest, func(executor.PromptEvent)) error); ok {
 		r0 = returnFunc(ctx, req, cb)
 	} else {
 		r0 = ret.Error(0)
@@ -62,25 +62,25 @@ type MockStreamPrompter_PromptStream_Call struct {
 
 // PromptStream is a helper method to define mock.On call
 //   - ctx context.Context
-//   - req agent.PromptRequest
-//   - cb func(agent.PromptEvent)
+//   - req executor.PromptRequest
+//   - cb func(executor.PromptEvent)
 func (_e *MockStreamPrompter_Expecter) PromptStream(ctx interface{}, req interface{}, cb interface{}) *MockStreamPrompter_PromptStream_Call {
 	return &MockStreamPrompter_PromptStream_Call{Call: _e.mock.On("PromptStream", ctx, req, cb)}
 }
 
-func (_c *MockStreamPrompter_PromptStream_Call) Run(run func(ctx context.Context, req agent.PromptRequest, cb func(agent.PromptEvent))) *MockStreamPrompter_PromptStream_Call {
+func (_c *MockStreamPrompter_PromptStream_Call) Run(run func(ctx context.Context, req executor.PromptRequest, cb func(executor.PromptEvent))) *MockStreamPrompter_PromptStream_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
 			arg0 = args[0].(context.Context)
 		}
-		var arg1 agent.PromptRequest
+		var arg1 executor.PromptRequest
 		if args[1] != nil {
-			arg1 = args[1].(agent.PromptRequest)
+			arg1 = args[1].(executor.PromptRequest)
 		}
-		var arg2 func(agent.PromptEvent)
+		var arg2 func(executor.PromptEvent)
 		if args[2] != nil {
-			arg2 = args[2].(func(agent.PromptEvent))
+			arg2 = args[2].(func(executor.PromptEvent))
 		}
 		run(
 			arg0,
@@ -96,7 +96,7 @@ func (_c *MockStreamPrompter_PromptStream_Call) Return(err error) *MockStreamPro
 	return _c
 }
 
-func (_c *MockStreamPrompter_PromptStream_Call) RunAndReturn(run func(ctx context.Context, req agent.PromptRequest, cb func(agent.PromptEvent)) error) *MockStreamPrompter_PromptStream_Call {
+func (_c *MockStreamPrompter_PromptStream_Call) RunAndReturn(run func(ctx context.Context, req executor.PromptRequest, cb func(executor.PromptEvent)) error) *MockStreamPrompter_PromptStream_Call {
 	_c.Call.Return(run)
 	return _c
 }
