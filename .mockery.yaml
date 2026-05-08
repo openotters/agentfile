@@ -42,3 +42,6 @@ packages:
       Spawner:
       Cmd:
       Dialer:
+  github.com/openotters/agentfile/executor/docker:
+    interfaces:
+      Client:

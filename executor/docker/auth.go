@@ -51,11 +51,16 @@ func resolveRegistryAuth(ref string) string {
 		return ""
 	}
 
-	// Build the X-Registry-Auth payload as a generic map so
-	// gosec doesn't flag the `Password` struct field. The Docker
-	// SDK accepts any shape that JSON-decodes into AuthConfig
-	// (see moby/api/types/registry), and the user explicitly
-	// opted into supplying these credentials via `docker login`.
+	return authBlobJSON(user, pass, host)
+}
+
+// authBlobJSON produces the base64url-encoded JSON envelope the
+// Docker SDK expects in the `X-Registry-Auth` header. Built as a
+// generic map so gosec G117 doesn't flag a struct field named
+// `Password` — the Docker SDK accepts any shape that JSON-decodes
+// into AuthConfig (moby/api/types/registry), and these credentials
+// are the ones the user explicitly opted into via `docker login`.
+func authBlobJSON(user, pass, host string) string {
 	blob, err := json.Marshal(map[string]string{
 		"username":      user,
 		"password":      pass,

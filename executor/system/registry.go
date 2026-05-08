@@ -463,11 +463,3 @@ func splitRef(ref string) (string, string) {
 // because it appears in 4+ places and goconst would otherwise flag
 // the bare "latest" string.
 const defaultRefTag = "latest"
-
-// internalError keeps fmt referenced even if every method returned
-// ErrNotImplemented. Kept for follow-up commits.
-//
-//nolint:unused // referenced when migration completes
-func internalError(format string, args ...any) error {
-	return fmt.Errorf(format, args...)
-}

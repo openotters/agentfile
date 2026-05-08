@@ -312,10 +312,7 @@ func (r *registry) PushRemote(ctx context.Context, localRef, remoteRef string) e
 // image store. Returns a fresh Store per call — staging is per-
 // build, never shared across operations.
 func (r *registry) BuildTarget() oras.Target {
-	if cli, ok := r.client.(*mobyclient.Client); ok {
-		return NewStore(cli)
-	}
-	return nil
+	return NewStore(r.client)
 }
 
 // parseRFC3339Unix turns an RFC3339 timestamp string into unix

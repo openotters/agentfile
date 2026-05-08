@@ -195,7 +195,7 @@ func reserveLoopbackPort() (string, error) {
 // materialised content. Used by the docker executor to build the
 // bind-mount source.
 //
-//nolint:unused // referenced by the agent through a closure in newAgent
+
 func agentRootPath(root billy.Filesystem, id uuid.UUID) string {
 	return filepath.Join(root.Root(), id.String())
 }
@@ -203,7 +203,7 @@ func agentRootPath(root billy.Filesystem, id uuid.UUID) string {
 // openLogFile mirrors system.Provider.openLogFile so docker agents
 // also persist runtime logs to disk when WithLogDir is configured.
 //
-//nolint:unused // referenced via newAgent's closure in step-4 follow-up
+
 func (p *Provider) openLogFile(id uuid.UUID) (*os.File, error) {
 	if p.logDir == "" {
 		return nil, nil //nolint:nilnil // documented "no log file" sentinel

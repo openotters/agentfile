@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync"
 
-	mobyclient "github.com/moby/moby/client"
 	"github.com/opencontainers/go-digest"
 	"github.com/opencontainers/image-spec/specs-go"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -47,7 +46,7 @@ import (
 // artifacts are kilobytes (a Linux-arm64 ping is ~2 MiB even
 // gzipped), so memory pressure isn't a concern.
 type Store struct {
-	cli *mobyclient.Client
+	cli Client
 
 	mu sync.Mutex
 	// staged blobs keyed by digest. Includes manifest + config +
@@ -66,7 +65,7 @@ type Store struct {
 // stateful (accumulates blobs across Push calls) so callers should
 // scope one to each build / read flow rather than sharing across
 // concurrent operations.
-func NewStore(cli *mobyclient.Client) *Store {
+func NewStore(cli Client) *Store {
 	return &Store{
 		cli:    cli,
 		blobs:  map[digest.Digest][]byte{},
