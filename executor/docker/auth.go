@@ -120,7 +120,7 @@ func (p parsedConfig) entryFor(host string) (authEntry, bool) {
 		}
 	}
 
-	if host == "docker.io" {
+	if host == dockerHubShort {
 		for _, alias := range dockerHubAliases {
 			if entry, ok := p.auths[alias]; ok {
 				return entry, true
@@ -131,14 +131,25 @@ func (p parsedConfig) entryFor(host string) (authEntry, bool) {
 	return authEntry{}, false
 }
 
+// dockerHub* are the canonical names docker login may write into
+// config.json for Docker Hub. dockerHubLegacyV1 (with scheme + path)
+// is what the docker CLI has emitted for years; dockerHubIndex
+// drops the scheme; dockerHubShort is the modern short form. They
+// resolve to the same registry — entryFor walks all three.
+const (
+	dockerHubShort    = "docker.io"
+	dockerHubLegacyV1 = "https://index.docker.io/v1/"
+	dockerHubIndex    = "index.docker.io"
+)
+
 // dockerHubAliases lists the historical docker.io entries
 // `docker login` writes — kept tight on purpose; only the variants
 // the official CLI emits.
 //
 //nolint:gochecknoglobals // immutable lookup table
 var dockerHubAliases = []string{
-	"https://index.docker.io/v1/",
-	"index.docker.io",
+	dockerHubLegacyV1,
+	dockerHubIndex,
 }
 
 func readDockerConfig() parsedConfig {
@@ -188,7 +199,7 @@ func registryHost(ref string) string {
 		}
 	}
 
-	return "docker.io"
+	return dockerHubShort
 }
 
 func isHostLike(s string) bool {

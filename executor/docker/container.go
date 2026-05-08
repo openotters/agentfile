@@ -34,6 +34,16 @@ const (
 	// agentGRPCPort is the in-container port the runtime serves
 	// gRPC on. Published to the host on a random loopback port.
 	agentGRPCPort = "9999"
+
+	// labelOpenottersAgent marks every container the docker
+	// executor creates so cleanup / `docker ps --filter` calls
+	// can find them without depending on the container name.
+	labelOpenottersAgent = "io.openotters.agent"
+
+	// labelValueTrue is the canonical "this label is set" value
+	// — extracted to keep a stricter goconst lint rule happy
+	// when "true" appears in multiple files.
+	labelValueTrue = "true"
 )
 
 // containerSpec is the resolved set of arguments needed to call
@@ -82,7 +92,7 @@ func (s *containerSpec) buildConfig() *containertypes.Config {
 			port: struct{}{},
 		},
 		Labels: map[string]string{
-			"io.openotters.agent": "true",
+			labelOpenottersAgent: labelValueTrue,
 		},
 	}
 }

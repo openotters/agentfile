@@ -105,14 +105,17 @@ func parseEngineMajor(v string) (int, error) {
 	return strconv.Atoi(v[:dot])
 }
 
+// driverStatusType is the key Docker info uses to surface the
+// rootfs driver kind in DriverStatus. The classic graphdriver
+// reports keys like "Backing Filesystem" / "Supports d_type"; the
+// containerd snapshotter reports `driver-type=io.containerd.snapshotter…`.
+const driverStatusType = "driver-type"
+
 // hasContainerdSnapshotter scans Docker Info's DriverStatus for the
-// containerd-snapshotter marker. The classic graphdriver reports
-// keys like "Backing Filesystem" / "Supports d_type"; the
-// containerd snapshotter reports an entry whose key is
-// "driver-type" and value contains "io.containerd.snapshotter".
+// containerd-snapshotter marker.
 func hasContainerdSnapshotter(driverStatus [][2]string) bool {
 	for _, row := range driverStatus {
-		if row[0] == "driver-type" && strings.Contains(row[1], "io.containerd.snapshotter") {
+		if row[0] == driverStatusType && strings.Contains(row[1], "io.containerd.snapshotter") {
 			return true
 		}
 	}
