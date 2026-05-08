@@ -4,6 +4,8 @@ package system
 import (
 	"strings"
 	"testing"
+
+	"github.com/openotters/agentfile/executor"
 )
 
 func TestWorkspaceContextMarkdown_IncludesRoot(t *testing.T) {
@@ -63,7 +65,7 @@ func TestWorkspaceContextMarkdown_EmptyRootOmitsHostLine(t *testing.T) {
 func TestMountsContextMarkdown_RendersEachMount(t *testing.T) {
 	t.Parallel()
 
-	md := string(mountsContextMarkdown([]Mount{
+	md := string(mountsContextMarkdown([]executor.Mount{
 		{Host: "/home/me/proj", Target: "/workspace/proj", Description: "project checkout"},
 		{Host: "/tmp", Target: "/scratch"}, // no description
 	}))

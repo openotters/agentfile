@@ -6,6 +6,7 @@ import (
 	"github.com/go-git/go-billy/v6"
 	"oras.land/oras-go/v2"
 
+	"github.com/openotters/agentfile/executor"
 	"github.com/openotters/agentfile/model"
 	agentoci "github.com/openotters/agentfile/oci"
 	"github.com/openotters/agentfile/spec"
@@ -53,6 +54,30 @@ func WithLoopbackAllocator(a LoopbackAllocator) ProviderOption {
 // the same hostFS automatically.
 func WithHostFS(fs billy.Filesystem) ProviderOption {
 	return func(p *Provider) { p.hostFS = fs }
+}
+
+// WithRegistryTarget supplies the oras.Target the system Registry
+// façade reads from / writes to. The daemon plumbs in its embedded
+// registry's target here. Tests can omit it; the Registry methods
+// then return ErrNotImplemented.
+func WithRegistryTarget(target oras.Target) ProviderOption {
+	return func(p *Provider) { p.registryTarget = target }
+}
+
+// WithRegistryAddr supplies the embedded registry's HTTP address
+// ("host:port") so the system Registry can do List / Inspect /
+// Remove via the OCI distribution spec endpoints. Empty string
+// means those methods return ErrNotImplemented.
+func WithRegistryAddr(addr string) ProviderOption {
+	return func(p *Provider) { p.registryAddr = addr }
+}
+
+// WithRegistryCreatedAt supplies a callback returning the
+// unix-seconds when a manifest was first written to the embedded
+// registry. The daemon's EmbeddedRegistry has this info via on-disk
+// mtime. Optional — without it, ImageInfo.CreatedUnix is 0.
+func WithRegistryCreatedAt(fn CreatedAtFunc) ProviderOption {
+	return func(p *Provider) { p.registryCreatedAt = fn }
 }
 
 // withAgentHostFS is the AgentOption counterpart of WithHostFS, wired
@@ -138,21 +163,10 @@ func WithAddr(addr string) AgentOption {
 	return func(a *Agent) { a.addr = addr }
 }
 
-// Mount is a host-path → chroot-target binding, symlinked into the
-// agent's workspace at materialize time and re-applied on restore.
-// Host must be absolute; target is chroot-relative. Description is
-// optional and surfaces to the LLM via the generated MOUNTS.md
-// context layer.
-type Mount struct {
-	Host        string
-	Target      string
-	Description string
-}
-
 // WithMounts attaches bind-mount specs to the agent. The symlinks
 // are created by workspace.applyMounts at the end of materialize
 // (or via Agent.ReapplyMounts on restore).
-func WithMounts(m []Mount) AgentOption {
+func WithMounts(m []executor.Mount) AgentOption {
 	return func(a *Agent) { a.ws.mounts = m }
 }
 

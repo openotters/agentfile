@@ -1,58 +1,7 @@
-//nolint:testpackage // direct internal access
+//nolint:testpackage // direct internal access for envIndex helper
 package system
 
-import (
-	"strings"
-	"testing"
-)
-
-func TestBuildLockedEnv_OnlyCuratedKeys(t *testing.T) {
-	t.Parallel()
-
-	env := BuildLockedEnv("/agents/abc")
-
-	want := []string{
-		"PATH=/agents/abc/usr/bin",
-		"HOME=/agents/abc/home",
-		"XDG_CONFIG_HOME=/agents/abc/home/.config",
-		"XDG_CACHE_HOME=/agents/abc/home/.cache",
-		"XDG_DATA_HOME=/agents/abc/home/.local/share",
-		"TMPDIR=/agents/abc/tmp",
-		"LANG=C.UTF-8",
-		"OTTERS_AGENT_ROOT=/agents/abc",
-	}
-
-	if len(env) != len(want) {
-		t.Errorf("env has %d entries; want %d (%v)", len(env), len(want), env)
-	}
-
-	for _, w := range want {
-		found := false
-		for _, e := range env {
-			if e == w {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("missing entry %q in env: %v", w, env)
-		}
-	}
-}
-
-func TestBuildLockedEnv_NoHostInheritance(t *testing.T) {
-	// Spike a host env var BuildLockedEnv must NOT pass through.
-	// No t.Parallel — Setenv mutates the test process env.
-	t.Setenv("OTTERS_TEST_HOST_LEAK_CANARY", "leaked")
-
-	env := BuildLockedEnv("/agents/abc")
-
-	for _, e := range env {
-		if strings.HasPrefix(e, "OTTERS_TEST_HOST_LEAK_CANARY=") {
-			t.Fatalf("BuildLockedEnv leaked host env: %q", e)
-		}
-	}
-}
+import "testing"
 
 func TestEnvIndex_Helper(t *testing.T) {
 	t.Parallel()

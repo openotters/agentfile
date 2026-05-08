@@ -81,7 +81,10 @@ func buildCmdArgs(rt *executor.Runtime, rootDir string, extraArgs ...string) []s
 // A model without a provider prefix (e.g. "bare-name") yields no
 // credential entries — there is no provider to scope them under.
 func buildCmdEnv(rt *executor.Runtime, rootDir string) []string {
-	env := BuildLockedEnv(rootDir)
+	env := executor.BuildLockedEnv(executor.EnvOptions{
+		AgentRoot: rootDir,
+		BinDirs:   []string{filepath.Join(rootDir, "usr", "bin")},
+	})
 
 	provider, _ := splitProviderPrefix(rt.Model)
 	if provider == "" {

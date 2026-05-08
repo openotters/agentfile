@@ -35,6 +35,15 @@ type Provider struct {
 	logDir        string
 	loopback      LoopbackAllocator
 	agentDefaults []AgentOption
+
+	// registry is the executor.Registry façade exposed via the
+	// Registry() method. Constructed lazily on first access; the
+	// daemon plumbs the underlying oras.Target + HTTP addr via
+	// WithRegistryTarget / WithRegistryAddr at NewProvider time.
+	registry          *registry
+	registryTarget    oras.Target
+	registryAddr      string
+	registryCreatedAt CreatedAtFunc
 }
 
 // NewProvider creates a system Provider. storeFor is called once per
@@ -203,3 +212,17 @@ func (a *Provider) Destroy(_ context.Context) error {
 
 	return nil
 }
+
+// Registry returns the executor.Registry façade for this Provider.
+// Lazily constructed on first call so callers that never need it
+// pay no cost.
+func (a *Provider) Registry() executor.Registry {
+	if a.registry == nil {
+		a.registry = newRegistry(a.registryTarget, a.registryAddr, a.registryCreatedAt)
+	}
+
+	return a.registry
+}
+
+// Compile-time check that *Provider satisfies executor.Provider.
+var _ executor.Provider = (*Provider)(nil)

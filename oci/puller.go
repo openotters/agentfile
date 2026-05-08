@@ -57,20 +57,9 @@ func extractBin(ctx context.Context, fetcher content.Fetcher, manifest v1.Manife
 		binPath = filepath.Join(binPath, name)
 	}
 
-	for _, layer := range manifest.Layers {
-		title := layer.Annotations[v1.AnnotationTitle]
-		if title == name || title == binPath || filepath.Base(title) == name {
-			rc, err := fetcher.Fetch(ctx, layer)
-			if err != nil {
-				return err
-			}
-			defer rc.Close()
-
-			_, err = io.Copy(w, rc)
-			return err
-		}
-	}
-
+	// Pass 1: tar/tar+gzip layers — current bin/runtime images are
+	// real Docker images, so the binary lives inside a rootfs layer.
+	// Older (pre-tar) builds get caught by pass 2 below.
 	for _, layer := range manifest.Layers {
 		if !strings.Contains(layer.MediaType, "tar") {
 			continue
@@ -83,6 +72,24 @@ func extractBin(ctx context.Context, fetcher content.Fetcher, manifest v1.Manife
 
 		if found {
 			return nil
+		}
+	}
+
+	for _, layer := range manifest.Layers {
+		if strings.Contains(layer.MediaType, "tar") {
+			continue
+		}
+
+		title := layer.Annotations[v1.AnnotationTitle]
+		if title == name || title == binPath || filepath.Base(title) == name {
+			rc, err := fetcher.Fetch(ctx, layer)
+			if err != nil {
+				return err
+			}
+			defer rc.Close()
+
+			_, err = io.Copy(w, rc)
+			return err
 		}
 	}
 

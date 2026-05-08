@@ -72,7 +72,15 @@ type workspace struct {
 	digestResolver DigestResolver
 	imageRef       string
 	localRuntime   string
-	mounts         []Mount
+	mounts         []executor.Mount
+	// toolBinaryPath optionally overrides the per-tool binary path
+	// stamped into agent.yaml. Returning a non-empty string for a
+	// given tool name uses that string verbatim; returning ""
+	// keeps the default `usr/bin/<name>` (chroot-relative). Used by
+	// the docker executor to point the runtime at the in-container
+	// image-mount path (`/opt/bins/<name>/<name>`) instead of the
+	// disk path the system executor copies binaries to.
+	toolBinaryPath func(name string) string
 	// hostFS is a non-chrooted filesystem used for operations on real
 	// host paths: the mount symlink target, the local-runtime source
 	// file. NewAgent defaults to osfs.New("/"); tests substitute memfs.
@@ -81,24 +89,14 @@ type workspace struct {
 	hostFS billy.Filesystem
 }
 
+// materialize runs the full system-executor pipeline: content +
+// runtime/BIN binary install. Used by the system Provider only.
 func (w *workspace) materialize(
 	ctx context.Context, fs billy.Filesystem, id uuid.UUID, addr string,
 ) (*executor.Runtime, error) {
-	manifest, af, err := afstore.Load(ctx, w.store, w.ref)
+	rt, af, err := w.materializeContent(ctx, fs, id, addr)
 	if err != nil {
-		return nil, errors.Join(ErrPull, fmt.Errorf("loading %s: %w", w.ref, err))
-	}
-
-	af.Apply(w.overrides...)
-
-	for _, dir := range fhsDirs {
-		if mkdirErr := fs.MkdirAll(dir, 0o755); mkdirErr != nil {
-			return nil, fmt.Errorf("creating %s: %w", dir, mkdirErr)
-		}
-	}
-
-	if e := w.extractLayers(ctx, fs, manifest); e != nil {
-		return nil, e
+		return nil, err
 	}
 
 	if e := w.installRuntime(ctx, fs, af); e != nil {
@@ -109,9 +107,40 @@ func (w *workspace) materialize(
 		return nil, e
 	}
 
+	return rt, nil
+}
+
+// materializeContent does everything materialize does except
+// installing the runtime + BIN binaries to disk: pulls the agentfile
+// manifest, applies overrides, creates the FHS dirs, extracts CONTEXT
+// + ADD layers, resolves model credentials, builds the
+// executor.Runtime, writes WORKSPACE.md / AGENT.md / agent.yaml, and
+// applies user mount symlinks. Returns the agentfile spec so callers
+// (the system Provider's binary-install step) can drive the rest of
+// the pipeline without re-loading.
+func (w *workspace) materializeContent(
+	ctx context.Context, fs billy.Filesystem, id uuid.UUID, addr string,
+) (*executor.Runtime, *spec.Agentfile, error) {
+	manifest, af, err := afstore.Load(ctx, w.store, w.ref)
+	if err != nil {
+		return nil, nil, errors.Join(ErrPull, fmt.Errorf("loading %s: %w", w.ref, err))
+	}
+
+	af.Apply(w.overrides...)
+
+	for _, dir := range fhsDirs {
+		if mkdirErr := fs.MkdirAll(dir, 0o755); mkdirErr != nil {
+			return nil, nil, fmt.Errorf("creating %s: %w", dir, mkdirErr)
+		}
+	}
+
+	if e := w.extractLayers(ctx, fs, manifest); e != nil {
+		return nil, nil, e
+	}
+
 	agentMD := spec.GenerateAgentMD(af)
 	if e := util.WriteFile(fs, filepath.Join(contextDir, "AGENT.md"), []byte(agentMD), 0o644); e != nil {
-		return nil, fmt.Errorf("writing AGENT.md: %w", e)
+		return nil, nil, fmt.Errorf("writing AGENT.md: %w", e)
 	}
 
 	rt := &executor.Runtime{
@@ -125,11 +154,10 @@ func (w *workspace) materialize(
 		},
 	}
 
-	// Resolve model API credentials.
 	if w.modelResolver != nil {
 		apiURL, apiKey, resolveErr := w.modelResolver(af.Agent.Model)
 		if resolveErr != nil {
-			return nil, errors.Join(ErrModel, fmt.Errorf("resolving model: %w", resolveErr))
+			return nil, nil, errors.Join(ErrModel, fmt.Errorf("resolving model: %w", resolveErr))
 		}
 
 		rt.APIBase = apiURL
@@ -137,10 +165,17 @@ func (w *workspace) materialize(
 	}
 
 	for _, t := range af.Agent.Bins {
+		binary := filepath.Join(binDir, t.Name)
+		if w.toolBinaryPath != nil {
+			if override := w.toolBinaryPath(t.Name); override != "" {
+				binary = override
+			}
+		}
+
 		rt.Tools = append(rt.Tools, executor.ResolvedTool{
 			Name:        t.Name,
 			Description: t.Description,
-			Binary:      filepath.Join(binDir, t.Name),
+			Binary:      binary,
 			Ref:         t.Image,
 			Digest:      w.resolveDigest(t.Image),
 		})
@@ -155,18 +190,18 @@ func (w *workspace) materialize(
 	}
 
 	if e := rt.WriteTo(fs); e != nil {
-		return nil, fmt.Errorf("writing runtime config: %w", e)
+		return nil, nil, fmt.Errorf("writing runtime config: %w", e)
 	}
 
 	if e := w.writeWorkspaceContext(fs); e != nil {
-		return nil, e
+		return nil, nil, e
 	}
 
 	if e := w.applyMounts(fs); e != nil {
-		return nil, e
+		return nil, nil, e
 	}
 
-	return rt, nil
+	return rt, af, nil
 }
 
 // workspaceContextMarkdown renders the body of WORKSPACE.md given the
@@ -324,7 +359,7 @@ func (w *workspace) applyMounts(fs billy.Filesystem) error {
 // mountsContextMarkdown renders the body of MOUNTS.md for a given set
 // of mount specs. Pure; exists as its own function so the wording the
 // LLM sees is regression-testable.
-func mountsContextMarkdown(mounts []Mount) []byte {
+func mountsContextMarkdown(mounts []executor.Mount) []byte {
 	var b bytes.Buffer
 
 	b.WriteString("# Host-mounted paths\n\n")

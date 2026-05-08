@@ -1,0 +1,80 @@
+package system
+
+import (
+	"context"
+
+	"github.com/go-git/go-billy/v6"
+	"github.com/google/uuid"
+	"oras.land/oras-go/v2"
+
+	"github.com/openotters/agentfile/executor"
+	"github.com/openotters/agentfile/model"
+	agentoci "github.com/openotters/agentfile/oci"
+	"github.com/openotters/agentfile/spec"
+)
+
+// MaterializeOptions packages the inputs MaterializeContent needs.
+// Fields mirror the system workspace's internal struct so the
+// executor that lives elsewhere (today: the Docker executor) can
+// drive the same materialise pipeline without re-implementing it.
+type MaterializeOptions struct {
+	Store          oras.ReadOnlyTarget
+	Ref            spec.Reference
+	Overrides      []spec.Override
+	OCIPuller      agentoci.Puller
+	ModelResolver  model.Resolver
+	DigestResolver DigestResolver
+	ImageRef       string
+	LocalRuntime   string
+	Mounts         []executor.Mount
+	HostFS         billy.Filesystem
+	// ToolBinaryPath optionally returns an absolute in-container
+	// path for tool `name`. The docker executor returns
+	// `/opt/bins/<name>/<name>` so the runtime resolves the binary
+	// against the read-only image-mount instead of the bind-mounted
+	// agent root (which doesn't carry the binary on disk).
+	ToolBinaryPath func(name string) string
+}
+
+// MaterializeContent runs the system executor's content-only
+// materialisation pipeline against fs: pulls the agent image,
+// extracts CONTEXT + ADD layers, generates AGENT.md / WORKSPACE.md
+// / agent.yaml, resolves model credentials, applies user mount
+// symlinks. Does NOT install runtime / BIN binaries to disk —
+// that step is system-only.
+//
+// Exposed for the Docker executor to reuse the same FHS layout +
+// metadata generation without copying binaries the container will
+// pick up via image mounts instead.
+//
+// Errors join ErrPull / ErrModel where appropriate so callers can
+// route them to the right Status (StatusPullError /
+// StatusModelError).
+func MaterializeContent(
+	ctx context.Context,
+	fs billy.Filesystem,
+	id uuid.UUID,
+	addr string,
+	opts MaterializeOptions,
+) (*executor.Runtime, error) {
+	w := &workspace{
+		store:          opts.Store,
+		ref:            opts.Ref,
+		overrides:      opts.Overrides,
+		ociPuller:      opts.OCIPuller,
+		modelResolver:  opts.ModelResolver,
+		digestResolver: opts.DigestResolver,
+		imageRef:       opts.ImageRef,
+		localRuntime:   opts.LocalRuntime,
+		mounts:         opts.Mounts,
+		toolBinaryPath: opts.ToolBinaryPath,
+		hostFS:         opts.HostFS,
+	}
+
+	rt, _, err := w.materializeContent(ctx, fs, id, addr)
+	if err != nil {
+		return nil, err
+	}
+
+	return rt, nil
+}

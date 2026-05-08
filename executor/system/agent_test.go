@@ -39,7 +39,7 @@ func TestNewAgent_OptionsApply(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	mounts := []Mount{{Host: "/h", Target: "/t"}}
+	mounts := []executor.Mount{{Host: "/h", Target: "/t"}}
 
 	a := NewAgent(uuid.New(), memfs.New(),
 		WithAddr("127.0.0.1:4242"),

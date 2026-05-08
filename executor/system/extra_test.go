@@ -10,6 +10,8 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+
+	"github.com/openotters/agentfile/executor"
 )
 
 // TestCloseClient_NilConnIsNoop exercises the nil-branch of closeClient
@@ -72,7 +74,7 @@ func TestReapplyMounts_Delegates(t *testing.T) {
 	chroot := osfs.New("/tmp/reapply-test")
 
 	a := NewAgent(uuid.New(), chroot,
-		WithMounts([]Mount{{Host: "/home/me/code", Target: "/workspace/code"}}),
+		WithMounts([]executor.Mount{{Host: "/home/me/code", Target: "/workspace/code"}}),
 	)
 	a.ws.hostFS = hostFS
 

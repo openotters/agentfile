@@ -1,0 +1,11 @@
+FROM scratch
+
+RUNTIME ghcr.io/openotters/runtime:v1
+MODEL anthropic/claude-sonnet-4-5-20250929
+NAME base
+
+LABEL org.opencontainers.image.title="base"
+LABEL org.opencontainers.image.description="Minimal openotters base agent — pinned runtime + model, no SOUL, no BINs. Inherit FROM ghcr.io/openotters/agents/base in your own Agentfile, then add CONTEXT and BIN directives. Useful as a stable parent so consumers don't have to track runtime / model bumps themselves."
+LABEL org.opencontainers.image.source="https://github.com/openotters/agentfile"
+LABEL org.opencontainers.image.licenses="MIT"
+LABEL maintainer="romain.dary@gmail.com"

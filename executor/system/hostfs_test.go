@@ -11,6 +11,8 @@ import (
 	"github.com/go-git/go-billy/v6/memfs"
 	"github.com/go-git/go-billy/v6/osfs"
 	"github.com/google/uuid"
+
+	"github.com/openotters/agentfile/executor"
 )
 
 // --- applyMounts on memfs -----------------------------------------------
@@ -29,7 +31,7 @@ func TestApplyMounts_CreatesSymlinksOnHostFS(t *testing.T) {
 
 	w := &workspace{
 		hostFS: hostFS,
-		mounts: []Mount{
+		mounts: []executor.Mount{
 			{Host: "/home/me/proj", Target: "/workspace/proj", Description: "project"},
 			{Host: "/tmp", Target: "/scratch"},
 		},
@@ -55,7 +57,7 @@ func TestApplyMounts_IsIdempotent(t *testing.T) {
 
 	w := &workspace{
 		hostFS: hostFS,
-		mounts: []Mount{{Host: "/src", Target: "/mnt"}},
+		mounts: []executor.Mount{{Host: "/src", Target: "/mnt"}},
 	}
 
 	if err := w.applyMounts(chroot); err != nil {
@@ -77,7 +79,7 @@ func TestApplyMounts_EmptyTargetErrors(t *testing.T) {
 
 	w := &workspace{
 		hostFS: memfs.New(),
-		mounts: []Mount{{Host: "/src", Target: "/"}}, // trims to "" after prefix strip
+		mounts: []executor.Mount{{Host: "/src", Target: "/"}}, // trims to "" after prefix strip
 	}
 
 	err := w.applyMounts(osfs.New("/tmp/any"))
@@ -110,7 +112,7 @@ func TestApplyMounts_RequiresNonEmptyRoot(t *testing.T) {
 
 	w := &workspace{
 		hostFS: memfs.New(),
-		mounts: []Mount{{Host: "/src", Target: "/mnt"}},
+		mounts: []executor.Mount{{Host: "/src", Target: "/mnt"}},
 	}
 
 	// memfs.New().Root() returns "/" → non-empty, accepted.
