@@ -241,3 +241,49 @@ func (_c *MockProvider_Load_Call) RunAndReturn(run func(ctx context.Context) ([]
 	_c.Call.Return(run)
 	return _c
 }
+
+// Registry provides a mock function for the type MockProvider
+func (_mock *MockProvider) Registry() executor.Registry {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for Registry")
+	}
+
+	var r0 executor.Registry
+	if returnFunc, ok := ret.Get(0).(func() executor.Registry); ok {
+		r0 = returnFunc()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(executor.Registry)
+		}
+	}
+	return r0
+}
+
+// MockProvider_Registry_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Registry'
+type MockProvider_Registry_Call struct {
+	*mock.Call
+}
+
+// Registry is a helper method to define mock.On call
+func (_e *MockProvider_Expecter) Registry() *MockProvider_Registry_Call {
+	return &MockProvider_Registry_Call{Call: _e.mock.On("Registry")}
+}
+
+func (_c *MockProvider_Registry_Call) Run(run func()) *MockProvider_Registry_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockProvider_Registry_Call) Return(registry executor.Registry) *MockProvider_Registry_Call {
+	_c.Call.Return(registry)
+	return _c
+}
+
+func (_c *MockProvider_Registry_Call) RunAndReturn(run func() executor.Registry) *MockProvider_Registry_Call {
+	_c.Call.Return(run)
+	return _c
+}
