@@ -178,7 +178,8 @@ func TestBuildPushPull_Roundtrip(t *testing.T) {
 		t.Fatalf("envs = %d, want 1", len(pulled.Agent.Envs))
 	}
 
-	if got := pulled.Agent.Envs[0]; got.Key != "NODE_ENV" || got.Value != "production" || got.Description != "Application environment" {
+	got := pulled.Agent.Envs[0]
+	if got.Key != "NODE_ENV" || got.Value != "production" || got.Description != "Application environment" {
 		t.Errorf("env[0] = {%q, %q, %q}", got.Key, got.Value, got.Description)
 	}
 }

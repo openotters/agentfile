@@ -77,8 +77,10 @@ func TestGenerateAgentMD_Minimal(t *testing.T) {
 		t.Fatalf("missing header:\n%s", md)
 	}
 
-	if strings.Contains(md, "## Binaries") || strings.Contains(md, "## Data Files") || strings.Contains(md, "## Environment") {
-		t.Fatalf("minimal file should omit Binaries/Data Files/Environment sections:\n%s", md)
+	for _, section := range []string{"## Binaries", "## Data Files", "## Environment"} {
+		if strings.Contains(md, section) {
+			t.Fatalf("minimal file should omit %s section:\n%s", section, md)
+		}
 	}
 
 	if !strings.Contains(md, "## Filesystem") {

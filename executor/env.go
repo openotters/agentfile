@@ -95,12 +95,14 @@ var reservedRuntimeEnvKeys = map[string]struct{}{
 // returned skipped slice carries the offending keys so the caller
 // can log them once. spec.Validate rejects these at build time;
 // runtime filtering here is a safety net for malformed agent.yaml.
-func AppendUserEnv(base []string, userEnvs []*spec.Env) (env []string, skipped []string) {
+func AppendUserEnv(base []string, userEnvs []*spec.Env) ([]string, []string) {
 	if len(userEnvs) == 0 {
 		return base, nil
 	}
 
-	env = base
+	env := base
+
+	var skipped []string
 
 	for _, e := range userEnvs {
 		if e == nil || e.Key == "" {

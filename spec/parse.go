@@ -400,7 +400,7 @@ var reservedEnvKeys = map[string]struct{}{
 // underscore, then letters / digits / underscores. Uppercase only —
 // lowercase env vars work but are unconventional and almost always
 // a typo for a config knob (which goes through CONFIG, not ENV).
-var envKeyPattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`) //nolint:gochecknoglobals // compiled once
+var envKeyPattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 
 func validateEnvKey(key string) error {
 	if key == "" {
@@ -408,15 +408,26 @@ func validateEnvKey(key string) error {
 	}
 
 	if !envKeyPattern.MatchString(key) {
-		return fmt.Errorf("ENV %s: key must match %s (uppercase letters, digits, underscore; cannot start with a digit)", key, envKeyPattern)
+		return fmt.Errorf(
+			"ENV %s: key must match %s (uppercase letters, digits, underscore; cannot start with a digit)",
+			key, envKeyPattern,
+		)
 	}
 
 	if _, reserved := reservedEnvKeys[key]; reserved {
-		return fmt.Errorf("ENV %s: key is reserved by the locked-down agent env (PATH/HOME/XDG_*/TMPDIR/LANG/OTTERS_AGENT_ROOT)", key)
+		return fmt.Errorf(
+			"ENV %s: key is reserved by the locked-down agent env "+
+				"(PATH/HOME/XDG_*/TMPDIR/LANG/OTTERS_AGENT_ROOT)",
+			key,
+		)
 	}
 
 	if strings.HasSuffix(key, "_API_KEY") || strings.HasSuffix(key, "_API_BASE") {
-		return fmt.Errorf("ENV %s: keys ending in _API_KEY / _API_BASE are reserved for provider credentials — declare a provider model instead", key)
+		return fmt.Errorf(
+			"ENV %s: keys ending in _API_KEY / _API_BASE are reserved for provider "+
+				"credentials — declare a provider model instead",
+			key,
+		)
 	}
 
 	return nil
