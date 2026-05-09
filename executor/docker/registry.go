@@ -9,7 +9,6 @@ import (
 	"io"
 	"path"
 	"strings"
-	"sync"
 	"time"
 
 	mobyclient "github.com/moby/moby/client"
@@ -31,20 +30,6 @@ import (
 // where appropriate.
 type registry struct {
 	client Client
-
-	// artifactCache memoises lookupArtifact's
-	// (artifactType, annotations) result by Docker image ID.
-	// ImageSave streams the entire image tar just to read the
-	// manifest blob — paying that on every /images and /bins
-	// listing render is the dominant cost in the UI. Caching by
-	// ID (content-addressed) is safe across tag re-pushes; Remove
-	// invalidates the entry before the underlying ID disappears.
-	artifactCache sync.Map // map[string]artifactCacheEntry
-}
-
-type artifactCacheEntry struct {
-	artifactType string
-	annotations  map[string]string
 }
 
 func newRegistry(client Client) *registry {
@@ -119,7 +104,15 @@ func (r *registry) Inspect(ctx context.Context, ref string) (executor.ImageInfo,
 		return executor.ImageInfo{}, fmt.Errorf("%w: %s", executor.ErrRefNotFound, ref)
 	}
 
-	res, err := r.client.ImageInspect(ctx, id)
+	// ImageInspectWithManifests(true) asks the daemon to populate
+	// res.Descriptor + res.Manifests with manifest-level info that
+	// would otherwise require pulling the manifest blob out of the
+	// image store via ImageSave (multi-MB tar stream). On Docker 28+
+	// (which the executor's Verify gate enforces) artifactType lives
+	// on res.Descriptor.ArtifactType for OCI artifact manifests, or
+	// on res.Manifests[i].Descriptor.ArtifactType for multi-arch
+	// indexes — both readable in one round trip.
+	res, err := r.client.ImageInspect(ctx, id, mobyclient.ImageInspectWithManifests(true))
 	if err != nil {
 		return executor.ImageInfo{}, fmt.Errorf("docker: ImageInspect %s: %w", id, err)
 	}
@@ -136,12 +129,7 @@ func (r *registry) Inspect(ctx context.Context, ref string) (executor.ImageInfo,
 		mediaType = res.Descriptor.MediaType
 	}
 
-	// Fetch the manifest's artifactType so `image ls` / `bin ls`
-	// can filter by spec.AgentArtifactType / spec.BinArtifactType.
-	// `cli.ImageInspect` doesn't surface artifactType — it's part
-	// of the manifest blob, not the image config — so we hydrate
-	// the image once via ImageSave and cache by image ID.
-	artifactType, annotations := r.lookupArtifactByID(ctx, id)
+	artifactType, annotations := artifactFromInspect(res)
 
 	description := pickLabel(labels, ocispec.AnnotationDescription, "description")
 	source := pickLabel(labels, ocispec.AnnotationSource, "source")
@@ -166,74 +154,31 @@ func (r *registry) Inspect(ctx context.Context, ref string) (executor.ImageInfo,
 	}, nil
 }
 
-// lookupArtifactByID resolves an image's manifest via ImageSave +
-// parse and returns artifactType + manifest annotations. Cached by
-// image ID: ImageSave streams the entire image tar to extract one
-// JSON file, which is the dominant cost when /images and /bins
-// rendering walks N entries. Empty strings on any failure — Inspect
-// tolerates missing artifactType (ImageInfo.MediaType falls back to
-// the manifest mediaType).
+// artifactFromInspect extracts the manifest-level artifactType and
+// annotations from an ImageInspectResult populated with
+// ImageInspectWithManifests(true). For an OCI artifact manifest the
+// fields live on res.Descriptor; for a multi-arch index they live on
+// the first child whose descriptor carries a non-empty artifactType.
 //
-// Cache key is the docker image ID (content-addressed), so two tags
-// pointing at the same digest share one cache entry. Remove
-// invalidates the entry before the underlying ID disappears.
-func (r *registry) lookupArtifactByID(
-	ctx context.Context, id string,
-) (string, map[string]string) {
-	if id == "" {
-		return "", nil
+// Empty strings + nil map on missing data — Inspect tolerates the
+// absence (ImageInfo.MediaType falls back to the manifest
+// mediaType).
+func artifactFromInspect(res mobyclient.ImageInspectResult) (string, map[string]string) {
+	if res.Descriptor != nil && res.Descriptor.ArtifactType != "" {
+		return res.Descriptor.ArtifactType, res.Descriptor.Annotations
 	}
 
-	if v, ok := r.artifactCache.Load(id); ok {
-		e, _ := v.(artifactCacheEntry)
-
-		return e.artifactType, e.annotations
-	}
-
-	rc, err := r.client.ImageSave(ctx, []string{id})
-	if err != nil {
-		return "", nil
-	}
-	defer func() { _ = rc.Close() }()
-
-	manifestBytes, err := readManifestFromSaveTar(rc)
-	if err != nil {
-		return "", nil
-	}
-
-	var manifest struct {
-		ArtifactType string            `json:"artifactType"`
-		Annotations  map[string]string `json:"annotations"`
-		Manifests    []struct {
-			ArtifactType string            `json:"artifactType"`
-			Annotations  map[string]string `json:"annotations"`
-		} `json:"manifests"`
-	}
-
-	if jsonErr := json.Unmarshal(manifestBytes, &manifest); jsonErr != nil {
-		return "", nil
-	}
-
-	artifactType := manifest.ArtifactType
-	if artifactType == "" {
-		// Multi-arch indexes carry artifactType on the index AND/OR
-		// on each child. Pick the first non-empty child's value as
-		// the effective type.
-		for _, m := range manifest.Manifests {
-			if m.ArtifactType != "" {
-				artifactType = m.ArtifactType
-
-				break
-			}
+	for _, m := range res.Manifests {
+		if m.Descriptor.ArtifactType != "" {
+			return m.Descriptor.ArtifactType, m.Descriptor.Annotations
 		}
 	}
 
-	r.artifactCache.Store(id, artifactCacheEntry{
-		artifactType: artifactType,
-		annotations:  manifest.Annotations,
-	})
+	if res.Descriptor != nil {
+		return "", res.Descriptor.Annotations
+	}
 
-	return artifactType, manifest.Annotations
+	return "", nil
 }
 
 func firstNonEmpty(values ...string) string {
@@ -280,14 +225,10 @@ func (r *registry) Remove(ctx context.Context, ref string) error {
 	})
 	if err != nil {
 		if isNotFoundErr(err) {
-			r.artifactCache.Delete(id)
-
 			return fmt.Errorf("%w: %s", executor.ErrRefNotFound, ref)
 		}
 		return fmt.Errorf("docker: ImageRemove %s: %w", ref, err)
 	}
-
-	r.artifactCache.Delete(id)
 
 	return nil
 }
@@ -377,14 +318,18 @@ func pickLabel(m map[string]string, keys ...string) string {
 }
 
 // readManifestFromSaveTar parses an OCI image layout tar (the
-// shape ImageSave produces on Docker 28+) and returns the raw bytes
-// of the manifest pointed at by index.json. Used by Inspect to
-// surface the manifest's artifactType — `cli.ImageInspect` doesn't
-// expose it directly.
+// shape ImageSave / Store.buildOCILayoutTar produces) and returns
+// the raw bytes of the manifest pointed at by index.json. Used by
+// the store tests to round-trip the tar layout we hand to
+// cli.ImageLoad. The Inspect path used to call this on every ref
+// to extract artifactType — that's been replaced with
+// ImageInspectWithManifests, which surfaces artifactType directly
+// without streaming the image tar.
 func readManifestFromSaveTar(r io.Reader) ([]byte, error) {
 	tr := tar.NewReader(r)
 
 	blobs := map[string][]byte{}
+
 	var indexData []byte
 
 	for {
@@ -429,6 +374,7 @@ func readManifestFromSaveTar(r io.Reader) ([]byte, error) {
 	}
 
 	hex := index.Manifests[0].Digest.Encoded()
+
 	manifestBytes, ok := blobs[hex]
 	if !ok {
 		return nil, errors.New("save tar: manifest blob missing")

@@ -2,9 +2,7 @@
 package docker
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"iter"
@@ -15,7 +13,6 @@ import (
 	"github.com/moby/moby/api/types/image"
 	"github.com/moby/moby/api/types/jsonstream"
 	mobyclient "github.com/moby/moby/client"
-	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/mock"
 
@@ -347,23 +344,6 @@ func TestRegistry_Inspect_FetchesArtifactType(t *testing.T) {
 	t.Parallel()
 
 	const id = "sha256:abc"
-	manifestBlob := []byte(`{
-		"schemaVersion": 2,
-		"mediaType": "application/vnd.oci.image.manifest.v1+json",
-		"artifactType": "application/vnd.openotters.bin.v1",
-		"annotations": {"org.opencontainers.image.description": "from-manifest"}
-	}`)
-	manifestDigest := digest.FromBytes(manifestBlob)
-	manifestHex := manifestDigest.Encoded()
-
-	saveTar, _ := makeOCILayoutTarBytes("foo:latest", ocispec.Descriptor{
-		MediaType: ocispec.MediaTypeImageManifest,
-		Digest:    manifestDigest,
-		Size:      int64(len(manifestBlob)),
-	}, map[digest.Digest][]byte{
-		manifestDigest: manifestBlob,
-	})
-	_ = manifestHex // for clarity in the assertion below
 
 	cli := mockdocker.NewMockClient(t)
 	cli.EXPECT().
@@ -371,18 +351,25 @@ func TestRegistry_Inspect_FetchesArtifactType(t *testing.T) {
 		Return(mobyclient.ImageListResult{
 			Items: []image.Summary{{ID: id, RepoTags: []string{"foo:latest"}}},
 		}, nil).Maybe()
+	// Inspect now passes ImageInspectWithManifests(true); the daemon
+	// surfaces artifactType + annotations on res.Descriptor without
+	// us streaming the image tar via ImageSave.
 	cli.EXPECT().
-		ImageInspect(mock.Anything, id).
+		ImageInspect(mock.Anything, id, mock.Anything).
 		Return(mobyclient.ImageInspectResult{
 			InspectResponse: image.InspectResponse{
 				ID:      id,
 				Size:    42,
 				Created: "2026-05-08T10:00:00Z",
+				Descriptor: &ocispec.Descriptor{
+					MediaType:    ocispec.MediaTypeImageManifest,
+					ArtifactType: "application/vnd.openotters.bin.v1",
+					Annotations: map[string]string{
+						ocispec.AnnotationDescription: "from-manifest",
+					},
+				},
 			},
 		}, nil)
-	cli.EXPECT().
-		ImageSave(mock.Anything, []string{id}, mock.Anything).
-		Return(io.NopCloser(saveTar), nil)
 
 	reg := newRegistry(cli)
 	info, err := reg.Inspect(context.Background(), "foo:latest")
@@ -399,20 +386,6 @@ func TestRegistry_Inspect_FetchesArtifactType(t *testing.T) {
 	if info.Size != 42 {
 		t.Errorf("Size = %d, want 42", info.Size)
 	}
-}
-
-// makeOCILayoutTarBytes builds the minimum OCI image layout tar
-// shape that readManifestFromSaveTar can parse: oci-layout +
-// index.json + a single manifest blob. Returned as a *bytes.Reader
-// so io.NopCloser turns it into a ReadCloser the mock can hand back.
-func makeOCILayoutTarBytes(
-	ref string, manifestDesc ocispec.Descriptor, blobs map[digest.Digest][]byte,
-) (*bytes.Reader, error) {
-	buf, err := buildOCILayoutTar(ref, manifestDesc, blobs)
-	if err != nil {
-		return nil, err
-	}
-	return bytes.NewReader(buf.Bytes()), nil
 }
 
 func TestRegistry_Inspect_NotFound(t *testing.T) {
@@ -461,10 +434,10 @@ func TestFirstNonEmpty(t *testing.T) {
 	}
 }
 
-// Probe the dead-letter path: when ImageSave errors out, Inspect
-// still returns useful basic info from ImageInspect even though
-// it can't surface the artifactType.
-func TestRegistry_Inspect_ImageSaveError(t *testing.T) {
+// When the daemon returns no Descriptor (older API or non-manifest
+// store), Inspect still returns useful basic info from
+// ImageInspect even though it can't surface the artifactType.
+func TestRegistry_Inspect_NoDescriptor(t *testing.T) {
 	t.Parallel()
 
 	const id = "sha256:abc"
@@ -475,21 +448,18 @@ func TestRegistry_Inspect_ImageSaveError(t *testing.T) {
 			Items: []image.Summary{{ID: id, RepoTags: []string{"foo:latest"}}},
 		}, nil).Maybe()
 	cli.EXPECT().
-		ImageInspect(mock.Anything, id).
+		ImageInspect(mock.Anything, id, mock.Anything).
 		Return(mobyclient.ImageInspectResult{
 			InspectResponse: image.InspectResponse{ID: id, Size: 7},
 		}, nil)
-	cli.EXPECT().
-		ImageSave(mock.Anything, []string{id}, mock.Anything).
-		Return(nil, errors.New("save failed"))
 
 	reg := newRegistry(cli)
 	info, err := reg.Inspect(context.Background(), "foo:latest")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// MediaType falls back to the manifest mediatype since
-	// artifactType was unreachable.
+	// MediaType falls back to the manifest mediatype since the
+	// daemon didn't surface a Descriptor with artifactType.
 	if info.MediaType != ocispec.MediaTypeImageManifest {
 		t.Errorf("MediaType = %q, want manifest mediatype", info.MediaType)
 	}
@@ -519,30 +489,6 @@ func TestRegistry_Inspect_DescriptionFromAnnotations(t *testing.T) {
 	t.Parallel()
 
 	const id = "sha256:abc"
-	manifest := struct {
-		SchemaVersion int               `json:"schemaVersion"`
-		MediaType     string            `json:"mediaType"`
-		ArtifactType  string            `json:"artifactType,omitempty"`
-		Annotations   map[string]string `json:"annotations,omitempty"`
-	}{
-		SchemaVersion: 2,
-		MediaType:     ocispec.MediaTypeImageManifest,
-		ArtifactType:  "application/vnd.openotters.agent.v1",
-		Annotations: map[string]string{
-			ocispec.AnnotationDescription: "agent description",
-			ocispec.AnnotationSource:      "https://github.com/openotters/openotters",
-		},
-	}
-	manifestBlob, _ := json.Marshal(manifest)
-	manifestDigest := digest.FromBytes(manifestBlob)
-
-	saveTar, _ := makeOCILayoutTarBytes("foo:latest", ocispec.Descriptor{
-		MediaType: ocispec.MediaTypeImageManifest,
-		Digest:    manifestDigest,
-		Size:      int64(len(manifestBlob)),
-	}, map[digest.Digest][]byte{
-		manifestDigest: manifestBlob,
-	})
 
 	cli := mockdocker.NewMockClient(t)
 	cli.EXPECT().
@@ -551,13 +497,20 @@ func TestRegistry_Inspect_DescriptionFromAnnotations(t *testing.T) {
 			Items: []image.Summary{{ID: id, RepoTags: []string{"foo:latest"}}},
 		}, nil).Maybe()
 	cli.EXPECT().
-		ImageInspect(mock.Anything, id).
+		ImageInspect(mock.Anything, id, mock.Anything).
 		Return(mobyclient.ImageInspectResult{
-			InspectResponse: image.InspectResponse{ID: id},
+			InspectResponse: image.InspectResponse{
+				ID: id,
+				Descriptor: &ocispec.Descriptor{
+					MediaType:    ocispec.MediaTypeImageManifest,
+					ArtifactType: "application/vnd.openotters.agent.v1",
+					Annotations: map[string]string{
+						ocispec.AnnotationDescription: "agent description",
+						ocispec.AnnotationSource:      "https://github.com/openotters/openotters",
+					},
+				},
+			},
 		}, nil)
-	cli.EXPECT().
-		ImageSave(mock.Anything, []string{id}, mock.Anything).
-		Return(io.NopCloser(saveTar), nil)
 
 	reg := newRegistry(cli)
 	info, err := reg.Inspect(context.Background(), "foo:latest")
