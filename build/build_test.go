@@ -58,6 +58,9 @@ func newTestAgentfile(t *testing.T) (*spec.Agentfile, billy.Filesystem) {
 			Adds: []*spec.Add{
 				{Src: "data.json", Dst: "/data/data.json", Description: "Test data"},
 			},
+			Envs: []*spec.Env{
+				{Key: "NODE_ENV", Value: "production", Description: "Application environment"},
+			},
 			Labels: map[string]string{"description": "A test agent"},
 			Args:   map[string]string{},
 		},
@@ -169,5 +172,13 @@ func TestBuildPushPull_Roundtrip(t *testing.T) {
 
 	if pulled.Agent.Labels["description"] != "A test agent" {
 		t.Errorf("labels = %v", pulled.Agent.Labels)
+	}
+
+	if len(pulled.Agent.Envs) != 1 {
+		t.Fatalf("envs = %d, want 1", len(pulled.Agent.Envs))
+	}
+
+	if got := pulled.Agent.Envs[0]; got.Key != "NODE_ENV" || got.Value != "production" || got.Description != "Application environment" {
+		t.Errorf("env[0] = {%q, %q, %q}", got.Key, got.Value, got.Description)
 	}
 }

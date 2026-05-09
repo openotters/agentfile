@@ -14,6 +14,7 @@ runtime, model, personality, binaries, data, memory — in a single file that ca
     * [NAME](#name)
     * [CONTEXT](#context)
     * [CONFIG](#config)
+    * [ENV](#env)
     * [BIN](#bin)
       * [Binary OCI Image Structure](#binary-oci-image-structure)
         * [Annotations](#annotations)
@@ -197,6 +198,38 @@ Format: `CONFIG <key[!]>[=<value>] [description]`
 - Unquoted values follow YAML type resolution: `1024` → int, `0.7` → float, `true` → bool, `hello` → string
 - Trailing `!` marks the key as required — deploy fails if no value is provided
 - Required keys cannot have a default value
+
+### ENV
+
+Declares an OS environment variable to be set on the spawned agent process.
+Unlike `CONFIG` (a runtime-SDK knob the agent reads via the runtime API)
+and `ARG` (build-time substitution), `ENV` values land directly on the
+spawned process's environment — `Cmd.Env` for the system executor,
+`container.Config.Env` for the docker executor.
+
+```agentfile
+ENV NODE_ENV=production "Application environment"
+ENV LOG_LEVEL=debug
+ENV GREETING="hello world" "Quoted value with spaces"
+ENV STRIPE_PUBLISHABLE_KEY=pk_live_abc123 "Public Stripe key (no _API_KEY suffix)"
+```
+
+Format: `ENV <KEY>=<value> [description]`
+
+- Keys must be uppercase POSIX-style names matching `^[A-Z_][A-Z0-9_]*$`.
+- Quoted values support whitespace; unquoted values are single tokens.
+- Reserved keys are **rejected at build time** to keep the locked-down
+  agent env intact:
+    - `PATH`, `HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`,
+      `XDG_DATA_HOME`, `TMPDIR`, `LANG`, `OTTERS_AGENT_ROOT`
+    - any key ending in `_API_KEY` or `_API_BASE` (use a provider
+      `MODEL` declaration instead — provider creds travel through a
+      dedicated channel).
+- Duplicate keys: last declaration wins (parallels `CONFIG` overwrite
+  semantics).
+- Use `ENV` for OS-level integration (`NODE_ENV`, `LOG_LEVEL`,
+  third-party SDK config). Use `CONFIG` when the value should be
+  visible to the agent's LLM behaviour through the runtime SDK.
 
 ### BIN
 

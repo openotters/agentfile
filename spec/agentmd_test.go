@@ -21,6 +21,10 @@ func TestGenerateAgentMD(t *testing.T) {
 			{Dst: "/data/cities.json", Description: "city coords"},
 			{Dst: "/data/flags.bin"},
 		},
+		Envs: []*spec.Env{
+			{Key: "NODE_ENV", Value: "production", Description: "App env"},
+			{Key: "FEATURE_X", Value: "on"},
+		},
 	}}
 
 	md := spec.GenerateAgentMD(af)
@@ -49,6 +53,13 @@ func TestGenerateAgentMD(t *testing.T) {
 		}
 	}
 
+	// Environment table — rendered with backticked key/value, "-" when no Description.
+	for _, needle := range []string{"## Environment", "`NODE_ENV`", "`production`", "App env", "`FEATURE_X`", "`on`"} {
+		if !strings.Contains(md, needle) {
+			t.Fatalf("missing %q in output:\n%s", needle, md)
+		}
+	}
+
 	// Filesystem block is always emitted.
 	if !strings.Contains(md, "## Filesystem") || !strings.Contains(md, "workspace/") {
 		t.Fatalf("missing Filesystem block:\n%s", md)
@@ -66,8 +77,8 @@ func TestGenerateAgentMD_Minimal(t *testing.T) {
 		t.Fatalf("missing header:\n%s", md)
 	}
 
-	if strings.Contains(md, "## Binaries") || strings.Contains(md, "## Data Files") {
-		t.Fatalf("minimal file should omit Binaries/Data Files sections:\n%s", md)
+	if strings.Contains(md, "## Binaries") || strings.Contains(md, "## Data Files") || strings.Contains(md, "## Environment") {
+		t.Fatalf("minimal file should omit Binaries/Data Files/Environment sections:\n%s", md)
 	}
 
 	if !strings.Contains(md, "## Filesystem") {

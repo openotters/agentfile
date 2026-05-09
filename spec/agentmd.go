@@ -56,6 +56,23 @@ func GenerateAgentMD(af *Agentfile) string {
 		b.WriteByte('\n')
 	}
 
+	if len(a.Envs) > 0 {
+		b.WriteString("## Environment\n\n")
+		b.WriteString("| Key | Value | Description |\n")
+		b.WriteString("|-----|-------|-------------|\n")
+
+		for _, env := range a.Envs {
+			desc := env.Description
+			if desc == "" {
+				desc = "-"
+			}
+
+			fmt.Fprintf(&b, "| `%s` | `%s` | %s |\n", env.Key, env.Value, desc)
+		}
+
+		b.WriteByte('\n')
+	}
+
 	b.WriteString("## Filesystem\n\n")
 	b.WriteString("| Path | Access |\n")
 	b.WriteString("|------|--------|\n")
