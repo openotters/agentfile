@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	goruntime "runtime"
 
 	"github.com/go-git/go-billy/v6"
 	"github.com/go-git/go-billy/v6/osfs"
@@ -102,71 +101,20 @@ func Build(
 	return packManifest(ctx, dst, af, layers)
 }
 
-//nolint:funlen // single-shot manifest assembly; splitting fragments the data flow
 func packManifest(
 	ctx context.Context,
 	dst oras.Target,
 	af *spec.Agentfile,
 	layers []v1.Descriptor,
 ) (*spec.ReferenceWithDigest, error) {
-	// The agentfile JSON travels as a dedicated layer (mediatype
-	// AgentConfigLayerMediatype) so manifest.Config can be a
-	// standard image config with Labels — the only path docker's
-	// cli.ImageInspect surfaces, which is what the listing fast
-	// path reads. afstore.Load picks up the agentfile from
-	// whichever layer carries that mediatype.
-	agentfileData, err := json.MarshalIndent(af, "", "  ")
+	configData, err := json.MarshalIndent(af, "", "  ")
 	if err != nil {
-		return nil, fmt.Errorf("marshaling agentfile: %w", err)
+		return nil, fmt.Errorf("marshaling config: %w", err)
 	}
 
-	agentfileDesc, err := pushBlob(ctx, dst, spec.AgentConfigLayerMediatype, agentfileData, nil)
+	configDesc, err := pushBlob(ctx, dst, spec.AgentConfigLayerMediatype, configData, nil)
 	if err != nil {
-		return nil, fmt.Errorf("pushing agentfile layer: %w", err)
-	}
-
-	if agentfileDesc.Annotations == nil {
-		agentfileDesc.Annotations = make(map[string]string)
-	}
-
-	agentfileDesc.Annotations[v1.AnnotationTitle] = "agentfile.json"
-
-	configLabels := map[string]string{
-		spec.LabelArtifactType: spec.AgentArtifactType,
-	}
-	if desc := af.Agent.Labels[v1.AnnotationDescription]; desc != "" {
-		configLabels[v1.AnnotationDescription] = desc
-	}
-	if src := af.Agent.Labels[v1.AnnotationSource]; src != "" {
-		configLabels[v1.AnnotationSource] = src
-	}
-
-	// Architecture / OS are content-irrelevant for openotters agents
-	// (the agent's actual runtime is image-mounted from a separate
-	// multi-arch image), but docker's cli.ImageInspect platform-
-	// filters its Config response and returns empty Labels for
-	// images stamped with "unknown". Stamp the build host's platform
-	// so the daemon hosting the build surfaces the artifactType label
-	// correctly. Cross-host pulls re-stamp on rebuild.
-	imgConfig := v1.Image{
-		Platform: v1.Platform{
-			Architecture: goruntime.GOARCH,
-			OS:           goruntime.GOOS,
-		},
-		Config: v1.ImageConfig{
-			Labels: configLabels,
-		},
-		RootFS: v1.RootFS{Type: "layers"},
-	}
-
-	imgConfigData, err := json.Marshal(imgConfig)
-	if err != nil {
-		return nil, fmt.Errorf("marshaling image config: %w", err)
-	}
-
-	configDesc, err := pushBlob(ctx, dst, v1.MediaTypeImageConfig, imgConfigData, nil)
-	if err != nil {
-		return nil, fmt.Errorf("pushing image config: %w", err)
+		return nil, fmt.Errorf("pushing config: %w", err)
 	}
 
 	annotations := make(map[string]string)
@@ -178,15 +126,14 @@ func packManifest(
 		annotations[v1.AnnotationTitle] = af.Agent.Name
 	}
 
-	allLayers := append([]v1.Descriptor{agentfileDesc}, layers...)
-
 	manifest := v1.Manifest{
 		Versioned:   specs.Versioned{SchemaVersion: 2},
 		MediaType:   v1.MediaTypeImageManifest,
 		Config:      configDesc,
-		Layers:      allLayers,
+		Layers:      layers,
 		Annotations: annotations,
 	}
+	manifest.Config.MediaType = spec.AgentConfigLayerMediatype
 	manifest.ArtifactType = spec.AgentArtifactType
 
 	manifestData, err := json.Marshal(manifest)
