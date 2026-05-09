@@ -327,6 +327,25 @@ func (a *Agent) runtimeRef(rt *executor.Runtime) string {
 	return ""
 }
 
+// removeOrphanContainer force-removes any existing container with
+// the given name. Used by create() to clear a stopped leftover
+// from a previous Run before issuing ContainerCreate (the Docker
+// daemon rejects duplicate names with 409). Not-found errors are
+// swallowed — the absence is the desired state.
+func (a *Agent) removeOrphanContainer(ctx context.Context, name string) error {
+	if _, err := a.deps.client.ContainerRemove(ctx, name, mobyclient.ContainerRemoveOptions{
+		Force: true,
+	}); err != nil {
+		if isNotFoundErr(err) {
+			return nil
+		}
+
+		return fmt.Errorf("docker: remove orphan %s: %w", name, err)
+	}
+
+	return nil
+}
+
 // create assembles the ContainerCreateOptions from the resolved
 // runtime + Provider config and posts to the daemon.
 func (a *Agent) create(ctx context.Context) error {
@@ -361,6 +380,16 @@ func (a *Agent) create(ctx context.Context) error {
 		Model:         rt.Model,
 		HostGRPCPort:  a.deps.hostGRPCPort,
 		UserEnvs:      userEnvs,
+	}
+
+	// A previous Run may have left a stopped container with the
+	// same name (`otters-<agent-id>`); ContainerCreate would 409 on
+	// the name collision and the failure can flow through Run as a
+	// silent "container created but not started" — Status stays at
+	// Stopped, no log surfaces. Remove the orphan first so the
+	// fresh Create + Start path runs cleanly.
+	if removeErr := a.removeOrphanContainer(ctx, cs.Name); removeErr != nil {
+		return removeErr
 	}
 
 	resp, err := a.deps.client.ContainerCreate(ctx, mobyclient.ContainerCreateOptions{
