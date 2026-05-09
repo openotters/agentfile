@@ -66,6 +66,55 @@ func (r *registry) List(ctx context.Context) ([]string, error) {
 	return refs, nil
 }
 
+// ListEntries returns one ImageInfo per RepoTag in the daemon's
+// image store, populated from a single cli.ImageList response. No
+// per-ref Inspect roundtrips — Docker's ImageList already surfaces
+// Id, Created, Size, and Labels for every image, which is
+// everything the listing path consumes.
+//
+// Built so the daemon's ListImages can avoid a fan-out of N
+// ImageInspect calls (which on a 99-image registry adds ~3-5s of
+// serialised socket traffic on top of the single ImageList).
+func (r *registry) ListEntries(ctx context.Context) ([]executor.ImageInfo, error) {
+	res, err := r.client.ImageList(ctx, mobyclient.ImageListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("docker: ImageList: %w", err)
+	}
+
+	seen := map[string]struct{}{}
+	entries := make([]executor.ImageInfo, 0, len(res.Items))
+
+	for _, img := range res.Items {
+		for _, tag := range img.RepoTags {
+			if tag == "<none>:<none>" {
+				continue
+			}
+			if _, dup := seen[tag]; dup {
+				continue
+			}
+
+			seen[tag] = struct{}{}
+
+			labels := map[string]string{}
+			for k, v := range img.Labels {
+				labels[k] = v
+			}
+
+			entries = append(entries, executor.ImageInfo{
+				Ref:         tag,
+				Digest:      img.ID,
+				Size:        img.Size,
+				CreatedUnix: img.Created,
+				Description: pickLabel(labels, ocispec.AnnotationDescription, "description"),
+				Source:      pickLabel(labels, ocispec.AnnotationSource, "source"),
+				Labels:      labels,
+			})
+		}
+	}
+
+	return entries, nil
+}
+
 // Resolve looks up ref → descriptor. Returns ErrRefNotFound when
 // Docker has no image at that ref. Routes through resolveImageID
 // so OCI artifacts (which `cli.ImageInspect` 404s on by tag) are

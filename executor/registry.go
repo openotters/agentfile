@@ -63,6 +63,19 @@ type Registry interface {
 	// implementation-defined.
 	List(ctx context.Context) ([]string, error)
 
+	// ListEntries returns one ImageInfo per ref in a single backend
+	// call. Implementations are free to populate every field from
+	// the bulk-list response (docker's cli.ImageList already
+	// includes Id, Created, Size, Labels — Inspect-per-ref would
+	// re-fetch the same data) so the daemon's ListImages doesn't
+	// have to fan out N additional Inspect calls.
+	//
+	// Returns the same ref set as List, but with metadata
+	// populated. ListEntries SHOULD be the path callers prefer for
+	// listing surfaces; List is kept for callers that only need the
+	// ref strings (e.g. cache-warming, cleanup).
+	ListEntries(ctx context.Context) ([]ImageInfo, error)
+
 	// Resolve returns the descriptor for ref, or an error if ref
 	// is not known. Errors are typed where possible
 	// (errors.Is(err, ErrRefNotFound) == true on miss).

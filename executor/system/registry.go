@@ -95,6 +95,33 @@ func (r *registry) List(ctx context.Context) ([]string, error) {
 	return refs, nil
 }
 
+// ListEntries enumerates refs and resolves their per-image
+// metadata via the same Inspect path List would otherwise drive
+// from the daemon. The embedded HTTP registry serves every call
+// from local processes, so a per-ref fetch is fast and parallel
+// fan-out isn't worth the complexity here. Failed inspects are
+// dropped silently — they typically indicate a partial push that
+// the operator can clean up via `otters image rm`.
+func (r *registry) ListEntries(ctx context.Context) ([]executor.ImageInfo, error) {
+	refs, err := r.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	entries := make([]executor.ImageInfo, 0, len(refs))
+
+	for _, ref := range refs {
+		info, infoErr := r.Inspect(ctx, ref)
+		if infoErr != nil {
+			continue
+		}
+
+		entries = append(entries, info)
+	}
+
+	return entries, nil
+}
+
 // Resolve looks up ref → descriptor via the embedded registry.
 func (r *registry) Resolve(ctx context.Context, ref string) (v1.Descriptor, error) {
 	if r.target == nil {
