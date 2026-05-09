@@ -135,13 +135,35 @@ func (r *registry) Inspect(ctx context.Context, ref string) (executor.ImageInfo,
 	return executor.ImageInfo{
 		Ref:         ref,
 		Digest:      mi.digest,
-		MediaType:   mi.artifactType,
 		Size:        mi.size,
 		CreatedUnix: created,
 		Description: pickAnnotation(mi.annotations, v1.AnnotationDescription, "description"),
 		Source:      pickAnnotation(mi.annotations, v1.AnnotationSource, "source"),
 		Annotations: mi.annotations,
 	}, nil
+}
+
+// ManifestKind returns the manifest's artifactType for ref. The
+// embedded registry's manifest blob is the source of truth; the
+// daemon calls this at ingestion time and persists the result into
+// its image_kinds index so subsequent listings don't need to round-
+// trip through this path.
+func (r *registry) ManifestKind(ctx context.Context, ref string) (string, error) {
+	if r.addr == "" {
+		return "", executor.ErrNotImplemented
+	}
+
+	repo, tag := splitRef(ref)
+	if repo == "" {
+		return "", fmt.Errorf("system registry: invalid ref %q", ref)
+	}
+
+	mi, err := fetchManifestInfo(ctx, r.addr, repo, tag)
+	if err != nil {
+		return "", fmt.Errorf("system registry: %s: %w", ref, err)
+	}
+
+	return mi.artifactType, nil
 }
 
 // pickAnnotation returns the first non-empty value among the keys.

@@ -17,7 +17,6 @@ import (
 	"oras.land/oras-go/v2"
 
 	"github.com/openotters/agentfile/executor"
-	"github.com/openotters/agentfile/spec"
 )
 
 // registry is the docker executor's Registry: agents / runtime / BIN
@@ -92,17 +91,15 @@ func (r *registry) Resolve(ctx context.Context, ref string) (ocispec.Descriptor,
 	}, nil
 }
 
-// Inspect returns metadata for ref. The artifactType + description
-// + source all come from the image config's Labels — stamped at
-// build time by bintool's BIN build and agentfile's agent build.
-// Single cheap ImageInspect roundtrip per ref; no manifest-blob
-// reads.
+// Inspect returns metadata for ref: digest, size, created, plus
+// description / source extracted from the image config's standard
+// OCI Labels. Cheap — single cli.ImageInspect roundtrip per ref,
+// no manifest-blob reads.
 //
-// Images without the spec.LabelArtifactType label (legacy openotters
-// builds, or non-openotters images like docker base layers the
-// executor pulls) come back with an empty MediaType — daemon
-// listings then filter them out as "unknown" rather than treating
-// them as agent / bin candidates.
+// MediaType is intentionally left empty here. The daemon owns
+// manifest-kind classification through its own image_kinds index
+// (populated at ingestion time via ManifestKind), so Inspect no
+// longer needs to surface artifactType.
 func (r *registry) Inspect(ctx context.Context, ref string) (executor.ImageInfo, error) {
 	res, err := r.client.ImageInspect(ctx, ref)
 	if err != nil {
@@ -123,13 +120,29 @@ func (r *registry) Inspect(ctx context.Context, ref string) (executor.ImageInfo,
 	return executor.ImageInfo{
 		Ref:         ref,
 		Digest:      res.ID,
-		MediaType:   labels[spec.LabelArtifactType],
 		Size:        res.Size,
 		CreatedUnix: parseRFC3339Unix(res.Created),
 		Description: pickLabel(labels, ocispec.AnnotationDescription, "description"),
 		Source:      pickLabel(labels, ocispec.AnnotationSource, "source"),
 		Labels:      labels,
 	}, nil
+}
+
+// ManifestKind always returns empty on the docker backend: the
+// moby SDK only exposes the manifest body via ImageSave (multi-MB
+// tar stream over the unix socket — the slow path we removed in
+// alpha.17), and Config.Labels is unreliable for openotters' agent
+// images whose custom config mediatype causes docker to return a
+// stub Config.
+//
+// The daemon doesn't need this method to work on docker because
+// every ingestion path (commitBuilt / Pull / Save) plumbs the
+// artifactType into the image_kinds index directly from the
+// build pipeline / remote fetch where it's known. ManifestKind is
+// kept on the interface for the system backend, where reading it
+// from the embedded HTTP registry is cheap.
+func (r *registry) ManifestKind(_ context.Context, _ string) (string, error) {
+	return "", nil
 }
 
 // Fetch is unused on the docker backend (the daemon's image RPCs

@@ -103,4 +103,16 @@ type Registry interface {
 	// build-via-ImageLoad. Daemon callers must check for nil and
 	// emit a clear "build unsupported on this executor" error.
 	BuildTarget() oras.Target
+
+	// ManifestKind returns the manifest's `artifactType` for ref —
+	// the openotters kind ("application/vnd.openotters.{agent,bin}.v1")
+	// when the producer stamped it, otherwise the empty string. Used
+	// by the daemon to populate its image_kinds index at ingestion
+	// time so subsequent listings don't have to re-derive the kind
+	// from each backend's idiosyncratic surface (docker config Labels
+	// for bins, manifest annotations for agents). Cheap on both
+	// backends: system reads the manifest blob it already has;
+	// docker reads the same Config.Labels[LabelArtifactType] today's
+	// Inspect path used to read.
+	ManifestKind(ctx context.Context, ref string) (string, error)
 }

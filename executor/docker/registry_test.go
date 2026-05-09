@@ -19,7 +19,6 @@ import (
 
 	"github.com/openotters/agentfile/executor"
 	mockdocker "github.com/openotters/agentfile/mocks/docker"
-	"github.com/openotters/agentfile/spec"
 )
 
 // fakePullPushResponse satisfies the SDK's ImagePullResponse /
@@ -342,11 +341,11 @@ func TestRegistry_PushRemote_Retags(t *testing.T) {
 	}
 }
 
-// Fast path: when the image config carries the openotters
-// artifactType label (modern bintool / agent builds stamp it at
-// build time), Inspect reads it directly from Config.Labels and
-// skips the ImageSave roundtrip entirely.
-func TestRegistry_Inspect_FastPathLabel(t *testing.T) {
+// MediaType is intentionally always empty on the docker backend —
+// kind classification is owned by the daemon's image_kinds index,
+// populated at ingestion time. ManifestKind is a no-op that
+// preserves the same contract on this backend.
+func TestRegistry_Inspect_MediaTypeAlwaysEmpty(t *testing.T) {
 	t.Parallel()
 
 	cli := mockdocker.NewMockClient(t)
@@ -360,25 +359,23 @@ func TestRegistry_Inspect_FastPathLabel(t *testing.T) {
 					ImageConfig: ocispec.ImageConfig{
 						Labels: map[string]string{
 							"io.openotters.artifact-type":          "application/vnd.openotters.bin.v1",
-							"org.opencontainers.image.description": "fast-path",
+							"org.opencontainers.image.description": "labeled",
 							"org.opencontainers.image.source":      "https://example.test",
 						},
 					},
 				},
 			},
 		}, nil)
-	// Crucially: NO ImageSave expectation. The mock fails the
-	// test if Inspect tries to call it.
 
 	reg := newRegistry(cli)
 	info, err := reg.Inspect(context.Background(), "foo:latest")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.MediaType != "application/vnd.openotters.bin.v1" {
-		t.Errorf("MediaType = %q, want bin artifactType from label", info.MediaType)
+	if info.MediaType != "" {
+		t.Errorf("MediaType = %q, want empty (docker backend never surfaces kind)", info.MediaType)
 	}
-	if info.Description != "fast-path" {
+	if info.Description != "labeled" {
 		t.Errorf("Description = %q", info.Description)
 	}
 	if info.Source != "https://example.test" {
@@ -386,26 +383,18 @@ func TestRegistry_Inspect_FastPathLabel(t *testing.T) {
 	}
 }
 
-// Images without LabelArtifactType (legacy openotters builds, or
-// non-openotters images like docker base layers) come back with
-// empty MediaType — daemon listings filter them out as "unknown".
-func TestRegistry_Inspect_NoLabelReturnsEmptyMediaType(t *testing.T) {
+func TestRegistry_ManifestKind_AlwaysEmpty(t *testing.T) {
 	t.Parallel()
 
 	cli := mockdocker.NewMockClient(t)
-	cli.EXPECT().
-		ImageInspect(mock.Anything, "alpine:latest").
-		Return(mobyclient.ImageInspectResult{
-			InspectResponse: image.InspectResponse{ID: "sha256:abc", Size: 7},
-		}, nil)
 
 	reg := newRegistry(cli)
-	info, err := reg.Inspect(context.Background(), "alpine:latest")
+	got, err := reg.ManifestKind(context.Background(), "anything:latest")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("ManifestKind: %v", err)
 	}
-	if info.MediaType != "" {
-		t.Errorf("MediaType = %q, want empty (no LabelArtifactType)", info.MediaType)
+	if got != "" {
+		t.Errorf("ManifestKind = %q, want empty (no docker API surfaces it cheaply)", got)
 	}
 }
 
@@ -466,7 +455,6 @@ func TestRegistry_Inspect_DescriptionFromLabels(t *testing.T) {
 				Config: &dockerimagespec.DockerOCIImageConfig{
 					ImageConfig: ocispec.ImageConfig{
 						Labels: map[string]string{
-							spec.LabelArtifactType:        spec.AgentArtifactType,
 							ocispec.AnnotationDescription: "agent description",
 							ocispec.AnnotationSource:      "https://github.com/openotters/openotters",
 						},

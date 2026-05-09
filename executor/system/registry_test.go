@@ -218,14 +218,26 @@ func TestRegistry_Inspect(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if info.MediaType != "application/vnd.openotters.agent.v1" {
-		t.Errorf("MediaType = %q, want artifactType", info.MediaType)
-	}
 	if info.Description != "test agent" {
 		t.Errorf("Description = %q, want test agent", info.Description)
 	}
 	if info.Size == 0 {
 		t.Errorf("Size should be non-zero")
+	}
+
+	// MediaType is intentionally not surfaced by Inspect anymore;
+	// kind classification flows through ManifestKind and the
+	// daemon's image_kinds index.
+	if info.MediaType != "" {
+		t.Errorf("MediaType = %q, want empty (use ManifestKind)", info.MediaType)
+	}
+
+	kind, kindErr := r.ManifestKind(context.Background(), "foo:latest")
+	if kindErr != nil {
+		t.Fatalf("ManifestKind: %v", kindErr)
+	}
+	if kind != "application/vnd.openotters.agent.v1" {
+		t.Errorf("ManifestKind = %q, want agent.v1", kind)
 	}
 }
 
@@ -479,8 +491,13 @@ func TestRegistry_Inspect_Index(t *testing.T) {
 	if info.Description != "from-index" {
 		t.Errorf("description = %q", info.Description)
 	}
-	if info.MediaType != "application/vnd.openotters.bin.v1" {
-		t.Errorf("MediaType = %q", info.MediaType)
+
+	kind, kindErr := r.ManifestKind(context.Background(), "foo:latest")
+	if kindErr != nil {
+		t.Fatalf("ManifestKind: %v", kindErr)
+	}
+	if kind != "application/vnd.openotters.bin.v1" {
+		t.Errorf("ManifestKind = %q", kind)
 	}
 }
 
