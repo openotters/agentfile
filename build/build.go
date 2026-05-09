@@ -107,14 +107,54 @@ func packManifest(
 	af *spec.Agentfile,
 	layers []v1.Descriptor,
 ) (*spec.ReferenceWithDigest, error) {
-	configData, err := json.MarshalIndent(af, "", "  ")
+	// The agentfile JSON travels as a dedicated layer (mediatype
+	// AgentConfigLayerMediatype) so manifest.Config can be a
+	// standard image config with Labels — the only path docker's
+	// cli.ImageInspect surfaces, which is what the listing fast
+	// path reads. afstore.Load picks up the agentfile from
+	// whichever layer carries that mediatype.
+	agentfileData, err := json.MarshalIndent(af, "", "  ")
 	if err != nil {
-		return nil, fmt.Errorf("marshaling config: %w", err)
+		return nil, fmt.Errorf("marshaling agentfile: %w", err)
 	}
 
-	configDesc, err := pushBlob(ctx, dst, spec.AgentConfigLayerMediatype, configData, nil)
+	agentfileDesc, err := pushBlob(ctx, dst, spec.AgentConfigLayerMediatype, agentfileData, nil)
 	if err != nil {
-		return nil, fmt.Errorf("pushing config: %w", err)
+		return nil, fmt.Errorf("pushing agentfile layer: %w", err)
+	}
+
+	if agentfileDesc.Annotations == nil {
+		agentfileDesc.Annotations = make(map[string]string)
+	}
+
+	agentfileDesc.Annotations[v1.AnnotationTitle] = "agentfile.json"
+
+	configLabels := map[string]string{
+		spec.LabelArtifactType: spec.AgentArtifactType,
+	}
+	if desc := af.Agent.Labels[v1.AnnotationDescription]; desc != "" {
+		configLabels[v1.AnnotationDescription] = desc
+	}
+	if src := af.Agent.Labels[v1.AnnotationSource]; src != "" {
+		configLabels[v1.AnnotationSource] = src
+	}
+
+	imgConfig := v1.Image{
+		Platform: v1.Platform{Architecture: "unknown", OS: "unknown"},
+		Config: v1.ImageConfig{
+			Labels: configLabels,
+		},
+		RootFS: v1.RootFS{Type: "layers"},
+	}
+
+	imgConfigData, err := json.Marshal(imgConfig)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling image config: %w", err)
+	}
+
+	configDesc, err := pushBlob(ctx, dst, v1.MediaTypeImageConfig, imgConfigData, nil)
+	if err != nil {
+		return nil, fmt.Errorf("pushing image config: %w", err)
 	}
 
 	annotations := make(map[string]string)
@@ -126,14 +166,15 @@ func packManifest(
 		annotations[v1.AnnotationTitle] = af.Agent.Name
 	}
 
+	allLayers := append([]v1.Descriptor{agentfileDesc}, layers...)
+
 	manifest := v1.Manifest{
 		Versioned:   specs.Versioned{SchemaVersion: 2},
 		MediaType:   v1.MediaTypeImageManifest,
 		Config:      configDesc,
-		Layers:      layers,
+		Layers:      allLayers,
 		Annotations: annotations,
 	}
-	manifest.Config.MediaType = spec.AgentConfigLayerMediatype
 	manifest.ArtifactType = spec.AgentArtifactType
 
 	manifestData, err := json.Marshal(manifest)

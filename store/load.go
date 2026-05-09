@@ -22,8 +22,12 @@ import (
 	"github.com/openotters/agentfile/spec"
 )
 
-// Load resolves ref in s and returns the raw manifest and parsed Agentfile.
-// Layer contents (Context.Content, Add.Content) are not hydrated; use
+// Load resolves ref in s and returns the raw manifest and parsed
+// Agentfile. The Agentfile JSON lives in a dedicated layer
+// (mediatype spec.AgentConfigLayerMediatype) — manifest.Config is
+// a standard image config so docker's cli.ImageInspect can surface
+// the artifact-type Label on the daemon-side fast path. Layer
+// contents (Context.Content, Add.Content) are not hydrated; use
 // LoadHydrated when callers need those fields populated.
 func Load(ctx context.Context, s oras.ReadOnlyTarget, ref spec.Reference) (*v1.Manifest, *spec.Agentfile, error) {
 	desc, err := s.Resolve(ctx, ref.String())
@@ -41,13 +45,27 @@ func Load(ctx context.Context, s oras.ReadOnlyTarget, ref spec.Reference) (*v1.M
 		return nil, nil, fmt.Errorf("parsing manifest: %w", err)
 	}
 
-	configData, err := fetchBytes(ctx, s, manifest.Config)
+	var agentfileLayer *v1.Descriptor
+
+	for i, layer := range manifest.Layers {
+		if layer.MediaType == spec.AgentConfigLayerMediatype {
+			agentfileLayer = &manifest.Layers[i]
+
+			break
+		}
+	}
+
+	if agentfileLayer == nil {
+		return nil, nil, fmt.Errorf("agentfile layer (%s) not found in manifest", spec.AgentConfigLayerMediatype)
+	}
+
+	agentfileData, err := fetchBytes(ctx, s, *agentfileLayer)
 	if err != nil {
-		return nil, nil, fmt.Errorf("fetching config: %w", err)
+		return nil, nil, fmt.Errorf("fetching agentfile layer: %w", err)
 	}
 
 	var af spec.Agentfile
-	if err = json.Unmarshal(configData, &af); err != nil {
+	if err = json.Unmarshal(agentfileData, &af); err != nil {
 		return nil, nil, fmt.Errorf("parsing agentfile: %w", err)
 	}
 
