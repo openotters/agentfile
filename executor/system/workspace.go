@@ -81,6 +81,18 @@ type workspace struct {
 	// image-mount path (`/opt/bins/<name>/<name>`) instead of the
 	// disk path the system executor copies binaries to.
 	toolBinaryPath func(name string) string
+	// view is the agent-visible filesystem layout used to render
+	// WORKSPACE.md. Zero-value means "system defaults derived from
+	// fs.Root()". The docker executor sets a container-rooted view
+	// (Root="/workspace", BinDirs per-BIN, RuntimeBin in /opt,
+	// Isolated=true) so the LLM never sees the host path of its
+	// bind mount.
+	view executor.WorkspaceView
+	// viewBinDirsForTools fills view.BinDirs from the resolved
+	// tool list before WORKSPACE.md is written. Docker uses it so
+	// each declared BIN gets its in-container image-mount dir
+	// without re-parsing the spec.
+	viewBinDirsForTools func(toolNames []string) []string
 	// hostFS is a non-chrooted filesystem used for operations on real
 	// host paths: the mount symlink target, the local-runtime source
 	// file. NewAgent defaults to osfs.New("/"); tests substitute memfs.
@@ -193,6 +205,18 @@ func (w *workspace) materializeContent(
 		return nil, nil, fmt.Errorf("writing runtime config: %w", e)
 	}
 
+	// Populate the view's BIN dirs from the resolved tools when the
+	// caller (docker) supplied a builder. System leaves this nil
+	// and falls back to the default `<root>/usr/bin` single entry.
+	if w.viewBinDirsForTools != nil && len(w.view.BinDirs) == 0 {
+		names := make([]string, 0, len(rt.Tools))
+		for _, t := range rt.Tools {
+			names = append(names, t.Name)
+		}
+
+		w.view.BinDirs = w.viewBinDirsForTools(names)
+	}
+
 	if e := w.writeWorkspaceContext(fs); e != nil {
 		return nil, nil, e
 	}
@@ -210,33 +234,59 @@ func (w *workspace) materializeContent(
 // billy. An empty root omits the "Your workspace on the host" line and
 // leaves layout paths un-prefixed (test-only convenience).
 //
-// All layout paths are emitted as **full absolute host paths** rooted
-// at `root`. There is no chroot, so the agent must use real host
-// paths in tool calls — e.g. `cat /Users/me/.otters/agents/<id>/etc/context/WORKSPACE.md`,
-// not `cat /etc/context/WORKSPACE.md`.
+// Backwards-compatible shim: callers that have a system-style host
+// path call this; the docker executor builds an executor.WorkspaceView
+// and routes through workspaceContextMarkdownView instead.
 func workspaceContextMarkdown(root string) []byte {
+	return workspaceContextMarkdownView(executor.WorkspaceView{Root: root})
+}
+
+// workspaceContextMarkdownView renders WORKSPACE.md from a
+// WorkspaceView, choosing host-rooted vs. container-rooted phrasing
+// based on view.Isolated. A zero-value view (empty Root, etc.) is
+// treated as "system defaults derived from the empty root" so tests
+// can exercise the no-host-line branch.
+func workspaceContextMarkdownView(view executor.WorkspaceView) []byte {
 	var b bytes.Buffer
 
-	paths := workspacePaths(root)
+	paths := workspacePaths(view)
 
 	b.WriteString("# Your workspace\n\n")
-	b.WriteString("You run as a subprocess on the user's host machine. ")
-	b.WriteString("The openotters daemon prepares a dedicated directory ")
-	b.WriteString("for you with a small FHS-style layout. Your environment ")
-	b.WriteString("is locked down (PATH points only at your own bin dir, ")
-	b.WriteString("HOME / TMPDIR / XDG_* live inside this directory) so ")
-	b.WriteString("tools that touch `~/.cache` or `~/.config` write inside ")
-	b.WriteString("your tree, not the user's real home.\n\n")
 
-	if root != "" {
-		fmt.Fprintf(&b, "Your workspace on the host: `%s`\n\n", root)
-		b.WriteString("**There is no chroot.** Every path below is a real, absolute path on the host. ")
-		b.WriteString("Use these paths verbatim in tool calls — `/etc/context/...` and similar short ")
-		b.WriteString("forms do not exist outside this directory tree.\n\n")
+	if view.Isolated {
+		b.WriteString("You run inside an isolated container. ")
+		b.WriteString("The openotters daemon bind-mounts a small FHS-style tree at the path below ")
+		b.WriteString("and image-mounts the runtime + BIN tools read-only beside it. Your environment ")
+		b.WriteString("is locked down (PATH points only at your BIN tool dirs, HOME / TMPDIR / XDG_* ")
+		b.WriteString("live inside your tree) so tools that touch `~/.cache` or `~/.config` write ")
+		b.WriteString("inside your container, not the user's real home.\n\n")
+	} else {
+		b.WriteString("You run as a subprocess on the user's host machine. ")
+		b.WriteString("The openotters daemon prepares a dedicated directory ")
+		b.WriteString("for you with a small FHS-style layout. Your environment ")
+		b.WriteString("is locked down (PATH points only at your own bin dir, ")
+		b.WriteString("HOME / TMPDIR / XDG_* live inside this directory) so ")
+		b.WriteString("tools that touch `~/.cache` or `~/.config` write inside ")
+		b.WriteString("your tree, not the user's real home.\n\n")
+	}
+
+	if view.Root != "" {
+		switch {
+		case view.Isolated:
+			fmt.Fprintf(&b, "Your workspace inside the container: `%s`\n\n", view.Root)
+			b.WriteString("**Every path below is the path you see from inside the container, not the host.** ")
+			b.WriteString("Use these paths verbatim in tool calls; the host directory is bind-mounted ")
+			b.WriteString("here so writes inside this tree show up on the host automatically.\n\n")
+		default:
+			fmt.Fprintf(&b, "Your workspace on the host: `%s`\n\n", view.Root)
+			b.WriteString("**There is no chroot.** Every path below is a real, absolute path on the host. ")
+			b.WriteString("Use these paths verbatim in tool calls — `/etc/context/...` and similar short ")
+			b.WriteString("forms do not exist outside this directory tree.\n\n")
+		}
 	}
 
 	writeLayout(&b, paths)
-	writeRules(&b, root, paths)
+	writeRules(&b, view.Root, paths, view.Isolated)
 
 	return b.Bytes()
 }
@@ -244,16 +294,30 @@ func workspaceContextMarkdown(root string) []byte {
 // workspacePathSet groups the absolute layout paths so the renderer
 // can pass them around as a single value.
 type workspacePathSet struct {
-	context, data, bin, runtime, workspace, home, tmp, varlib, mounts string
+	context, data, workspace, home, tmp, varlib, mounts string
+	bins                                                []string
+	runtime                                             string
 }
 
-func workspacePaths(root string) workspacePathSet {
+func workspacePaths(view executor.WorkspaceView) workspacePathSet {
+	root := view.Root
 	context := filepath.Join(root, "etc", "context")
+
+	bins := view.BinDirs
+	if len(bins) == 0 {
+		bins = []string{filepath.Join(root, "usr", "bin")}
+	}
+
+	runtime := view.RuntimeBin
+	if runtime == "" {
+		runtime = filepath.Join(root, "usr", "local", "bin", "runtime")
+	}
+
 	return workspacePathSet{
 		context:   context,
 		data:      filepath.Join(root, "etc", "data"),
-		bin:       filepath.Join(root, "usr", "bin"),
-		runtime:   filepath.Join(root, "usr", "local", "bin", "runtime"),
+		bins:      bins,
+		runtime:   runtime,
 		workspace: filepath.Join(root, "workspace"),
 		home:      filepath.Join(root, "home"),
 		tmp:       filepath.Join(root, "tmp"),
@@ -267,8 +331,19 @@ func writeLayout(b *bytes.Buffer, p workspacePathSet) {
 	fmt.Fprintf(b, "- `%s/` — your system-prompt context files "+
 		"(this file lives here, alongside AGENT.md and any MOUNTS.md).\n", p.context)
 	fmt.Fprintf(b, "- `%s/` — static files baked in via `ADD` directives.\n", p.data)
-	fmt.Fprintf(b, "- `%s/` — your BIN tools "+
-		"(each BIN directive installs one binary here; the ONLY entry on $PATH).\n", p.bin)
+
+	if len(p.bins) == 1 {
+		fmt.Fprintf(b, "- `%s/` — your BIN tools "+
+			"(each BIN directive installs one binary here; the ONLY entry on $PATH).\n", p.bins[0])
+	} else {
+		b.WriteString("- BIN tools — one directory per BIN on $PATH " +
+			"(each declared BIN is image-mounted at its own path):\n")
+
+		for _, dir := range p.bins {
+			fmt.Fprintf(b, "    - `%s/`\n", dir)
+		}
+	}
+
 	fmt.Fprintf(b, "- `%s` — the runtime you yourself are.\n", p.runtime)
 	fmt.Fprintf(b, "- `%s/` — your default CWD; scratch space for session artefacts.\n", p.workspace)
 	fmt.Fprintf(b, "- `%s/` — `$HOME` for tool subprocesses "+
@@ -277,16 +352,22 @@ func writeLayout(b *bytes.Buffer, p workspacePathSet) {
 	fmt.Fprintf(b, "- `%s/` — persistent state (the memory DB lives here).\n\n", p.varlib)
 }
 
-func writeRules(b *bytes.Buffer, root string, p workspacePathSet) {
+func writeRules(b *bytes.Buffer, root string, p workspacePathSet, isolated bool) {
 	b.WriteString("Working-directory rules:\n\n")
 	fmt.Fprintf(b, "- Default CWD is `%s/`; relative paths in tool args resolve there.\n", p.workspace)
 	fmt.Fprintf(b, "- Prefer writing inside `%s/`, `%s/`, or `%s/`; treat `%s/etc/` and `%s/usr/` as read-only.\n",
 		p.workspace, p.tmp, p.home, root, root)
 	fmt.Fprintf(b, "- If `%s` exists, those paths are user-mounted host directories — "+
 		"the only \"outside\" paths you should explore or modify.\n", p.mounts)
-	b.WriteString("- Without a MOUNTS.md entry, do not probe arbitrary host paths " +
-		"(`/Users/…`, `/home/…`, `/etc/passwd`) — there is no sandbox enforcing this " +
-		"today, treat the boundary as a discipline rule.\n")
+
+	if isolated {
+		b.WriteString("- The container isolates you from the host filesystem; paths like " +
+			"`/Users/…`, `/home/…`, `/etc/passwd` are not visible inside, do not probe them.\n")
+	} else {
+		b.WriteString("- Without a MOUNTS.md entry, do not probe arbitrary host paths " +
+			"(`/Users/…`, `/home/…`, `/etc/passwd`) — there is no sandbox enforcing this " +
+			"today, treat the boundary as a discipline rule.\n")
+	}
 }
 
 // writeWorkspaceContext drops /etc/context/WORKSPACE.md describing
@@ -307,8 +388,13 @@ func (w *workspace) resolveDigest(ref string) string {
 }
 
 func (w *workspace) writeWorkspaceContext(fs billy.Filesystem) error {
+	view := w.view
+	if view.Root == "" {
+		view.Root = fs.Root()
+	}
+
 	return util.WriteFile(fs, filepath.Join(contextDir, "WORKSPACE.md"),
-		workspaceContextMarkdown(fs.Root()), 0o644)
+		workspaceContextMarkdownView(view), 0o644)
 }
 
 // applyMounts creates the symlinks declared by WithMounts inside the

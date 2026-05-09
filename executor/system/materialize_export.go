@@ -34,6 +34,21 @@ type MaterializeOptions struct {
 	// against the read-only image-mount instead of the bind-mounted
 	// agent root (which doesn't carry the binary on disk).
 	ToolBinaryPath func(name string) string
+
+	// View is the agent-visible filesystem layout used to render
+	// WORKSPACE.md. Zero-value uses system defaults derived from
+	// fs.Root() (host path, no sandbox). The docker executor sets
+	// a container-rooted view so the LLM doesn't see the host
+	// path of its bind mount.
+	View executor.WorkspaceView
+
+	// ViewBinDirsForTools, when non-nil, fills View.BinDirs from
+	// the resolved tool name list — invoked once after the spec is
+	// parsed and tools are populated, before WORKSPACE.md is
+	// rendered. Lets the docker executor produce one
+	// `/opt/bins/<name>` entry per BIN without parsing the spec
+	// twice.
+	ViewBinDirsForTools func(toolNames []string) []string
 }
 
 // MaterializeContent runs the system executor's content-only
@@ -58,17 +73,19 @@ func MaterializeContent(
 	opts MaterializeOptions,
 ) (*executor.Runtime, error) {
 	w := &workspace{
-		store:          opts.Store,
-		ref:            opts.Ref,
-		overrides:      opts.Overrides,
-		ociPuller:      opts.OCIPuller,
-		modelResolver:  opts.ModelResolver,
-		digestResolver: opts.DigestResolver,
-		imageRef:       opts.ImageRef,
-		localRuntime:   opts.LocalRuntime,
-		mounts:         opts.Mounts,
-		toolBinaryPath: opts.ToolBinaryPath,
-		hostFS:         opts.HostFS,
+		store:               opts.Store,
+		ref:                 opts.Ref,
+		overrides:           opts.Overrides,
+		ociPuller:           opts.OCIPuller,
+		modelResolver:       opts.ModelResolver,
+		digestResolver:      opts.DigestResolver,
+		imageRef:            opts.ImageRef,
+		localRuntime:        opts.LocalRuntime,
+		mounts:              opts.Mounts,
+		toolBinaryPath:      opts.ToolBinaryPath,
+		view:                opts.View,
+		viewBinDirsForTools: opts.ViewBinDirsForTools,
+		hostFS:              opts.HostFS,
 	}
 
 	rt, _, err := w.materializeContent(ctx, fs, id, addr)

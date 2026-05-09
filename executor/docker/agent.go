@@ -117,6 +117,26 @@ func (a *Agent) Prepare(ctx context.Context) error {
 			ToolBinaryPath: func(name string) string {
 				return inContainerBinsRoot + "/" + name + "/" + name
 			},
+			// WORKSPACE.md is rendered from the agent's container
+			// view: Root = /workspace (the bind target), runtime
+			// at /opt/runtime/runtime, and one BinDir per declared
+			// BIN at /opt/bins/<name>. Isolated=true flips the
+			// phrasing from "no chroot, real host paths" to "you
+			// run in a container; everything below is the
+			// in-container path".
+			View: executor.WorkspaceView{
+				Root:       inContainerWorkspace,
+				RuntimeBin: inContainerRuntimeDir + "/runtime",
+				Isolated:   true,
+			},
+			ViewBinDirsForTools: func(names []string) []string {
+				dirs := make([]string, 0, len(names))
+				for _, n := range names {
+					dirs = append(dirs, inContainerBinsRoot+"/"+n)
+				}
+
+				return dirs
+			},
 		},
 	)
 	if err != nil {

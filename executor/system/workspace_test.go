@@ -45,6 +45,49 @@ func TestWorkspaceContextMarkdown_IncludesRoot(t *testing.T) {
 	}
 }
 
+func TestWorkspaceContextMarkdownView_DockerContainer(t *testing.T) {
+	t.Parallel()
+
+	md := string(workspaceContextMarkdownView(executor.WorkspaceView{
+		Root:       "/workspace",
+		RuntimeBin: "/opt/runtime/runtime",
+		BinDirs:    []string{"/opt/bins/ping", "/opt/bins/jq"},
+		Isolated:   true,
+	}))
+
+	// Container-rooted paths must appear; per-BIN dirs listed.
+	for _, needle := range []string{
+		"# Your workspace",
+		"You run inside an isolated container",
+		"Your workspace inside the container: `/workspace`",
+		"`/workspace/etc/context/`",
+		"`/workspace/etc/data/`",
+		"`/opt/bins/ping/`",
+		"`/opt/bins/jq/`",
+		"`/opt/runtime/runtime`",
+		"`/workspace/workspace/`",
+		"`/workspace/home/`",
+		"`/workspace/tmp/`",
+		"The container isolates you from the host filesystem",
+	} {
+		if !strings.Contains(md, needle) {
+			t.Fatalf("missing %q in output:\n%s", needle, md)
+		}
+	}
+
+	// The host-rooted phrasing must NOT leak into the container view.
+	for _, forbidden := range []string{
+		"Your workspace on the host",
+		"There is no chroot",
+		"/usr/bin/", // system-default BIN dir
+		"/usr/local/bin/runtime",
+	} {
+		if strings.Contains(md, forbidden) {
+			t.Fatalf("host-rooted phrase %q must not appear in container view:\n%s", forbidden, md)
+		}
+	}
+}
+
 func TestWorkspaceContextMarkdown_EmptyRootOmitsHostLine(t *testing.T) {
 	t.Parallel()
 
