@@ -17,6 +17,7 @@ import (
 	"oras.land/oras-go/v2"
 
 	"github.com/openotters/agentfile/executor"
+	"github.com/openotters/agentfile/spec"
 )
 
 // registry is the docker executor's Registry: agents / runtime / BIN
@@ -28,6 +29,17 @@ import (
 // commit, BuildTarget always nil) return ErrNotImplemented; daemon
 // callers detect that and emit "not supported on docker executor"
 // where appropriate.
+// ociIndexFilename is the entry name for the OCI image layout's
+// index.json inside the tar produced by cli.ImageSave.
+const ociIndexFilename = "index.json"
+
+// maxLayerDiscardBytes caps how many bytes we'll io.Copy(Discard)
+// per entry when skipping a non-manifest blob in the save tar.
+// OCI artifact images we care about are at most a few hundred MB
+// per platform — anything larger is almost certainly malformed
+// and not worth pulling off the wire.
+const maxLayerDiscardBytes = 1 << 30 // 1 GiB
+
 type registry struct {
 	client Client
 }
@@ -95,26 +107,30 @@ func (r *registry) Resolve(ctx context.Context, ref string) (ocispec.Descriptor,
 // from the image-config Labels map (the OCI standard
 // `org.opencontainers.image.*` keys stamped by the build pipeline
 // or Dockerfile LABEL directives).
+//
+// The ref is passed to ImageInspect verbatim — Docker 28+ with the
+// containerd snapshotter resolves OCI artifact tags directly. We
+// deliberately don't call resolveImageID first: that helper does
+// cli.ImageList which is slow when the daemon hosts many images,
+// and forcing it onto every Inspect serialised the listing path
+// on a daemon-side O(N) scan.
+//
+// artifactType is read fast-path from Config.Labels[LabelArtifactType]
+// (stamped at build time by bintool's BIN build, and any future
+// builders following the same convention). When the label is
+// absent — old bin images built before the convention, openotters
+// agent images whose custom Config mediatype docker doesn't
+// surface — Inspect falls back to reading the manifest blob via
+// ImageSave. The fallback is slow but only triggers for legacy or
+// agent images.
 func (r *registry) Inspect(ctx context.Context, ref string) (executor.ImageInfo, error) {
-	id, err := resolveImageID(ctx, r.client, ref)
+	res, err := r.client.ImageInspect(ctx, ref)
 	if err != nil {
-		return executor.ImageInfo{}, fmt.Errorf("docker: resolve %s: %w", ref, err)
-	}
-	if id == "" {
-		return executor.ImageInfo{}, fmt.Errorf("%w: %s", executor.ErrRefNotFound, ref)
-	}
+		if isNotFoundErr(err) {
+			return executor.ImageInfo{}, fmt.Errorf("%w: %s", executor.ErrRefNotFound, ref)
+		}
 
-	// ImageInspectWithManifests(true) asks the daemon to populate
-	// res.Descriptor + res.Manifests with manifest-level info that
-	// would otherwise require pulling the manifest blob out of the
-	// image store via ImageSave (multi-MB tar stream). On Docker 28+
-	// (which the executor's Verify gate enforces) artifactType lives
-	// on res.Descriptor.ArtifactType for OCI artifact manifests, or
-	// on res.Manifests[i].Descriptor.ArtifactType for multi-arch
-	// indexes — both readable in one round trip.
-	res, err := r.client.ImageInspect(ctx, id, mobyclient.ImageInspectWithManifests(true))
-	if err != nil {
-		return executor.ImageInfo{}, fmt.Errorf("docker: ImageInspect %s: %w", id, err)
+		return executor.ImageInfo{}, fmt.Errorf("docker: ImageInspect %s: %w", ref, err)
 	}
 
 	labels := map[string]string{}
@@ -129,7 +145,22 @@ func (r *registry) Inspect(ctx context.Context, ref string) (executor.ImageInfo,
 		mediaType = res.Descriptor.MediaType
 	}
 
-	artifactType, annotations := artifactFromInspect(res)
+	var (
+		artifactType string
+		annotations  map[string]string
+	)
+
+	// Fast path: artifactType label present on the image config.
+	// New bintool / agent builders stamp this at build time.
+	if v, ok := labels[spec.LabelArtifactType]; ok && v != "" {
+		artifactType = v
+	} else {
+		// Slow fallback for legacy images: read the manifest blob
+		// via ImageSave. Agent images also land here because
+		// docker doesn't surface Config.Labels for our custom
+		// config mediatype.
+		artifactType, annotations = r.readArtifactFromSave(ctx, ref)
+	}
 
 	description := pickLabel(labels, ocispec.AnnotationDescription, "description")
 	source := pickLabel(labels, ocispec.AnnotationSource, "source")
@@ -154,31 +185,142 @@ func (r *registry) Inspect(ctx context.Context, ref string) (executor.ImageInfo,
 	}, nil
 }
 
-// artifactFromInspect extracts the manifest-level artifactType and
-// annotations from an ImageInspectResult populated with
-// ImageInspectWithManifests(true). For an OCI artifact manifest the
-// fields live on res.Descriptor; for a multi-arch index they live on
-// the first child whose descriptor carries a non-empty artifactType.
+// readArtifactFromSave streams the OCI image layout tar from
+// ImageSave and parses out the manifest's artifactType +
+// annotations. The tar reader aborts (via ReadCloser.Close()) the
+// instant we have everything we need — for OCI artifacts the
+// manifest comes before any large layer blobs, so the daemon stops
+// streaming before transferring the bulk of the image. Empty
+// strings + nil map on any failure; Inspect tolerates the absence
+// (ImageInfo.MediaType falls back to the manifest mediaType).
 //
-// Empty strings + nil map on missing data — Inspect tolerates the
-// absence (ImageInfo.MediaType falls back to the manifest
-// mediaType).
-func artifactFromInspect(res mobyclient.ImageInspectResult) (string, map[string]string) {
-	if res.Descriptor != nil && res.Descriptor.ArtifactType != "" {
-		return res.Descriptor.ArtifactType, res.Descriptor.Annotations
+// We can't read this from cli.ImageInspect — even with
+// ImageInspectWithManifests(true), Descriptor.ArtifactType is set
+// only when the descriptor itself (the parent index's pointer)
+// carries it, never from the manifest *body* where openotters'
+// build pipeline writes it. Descriptor.Annotations only contains
+// containerd-injected runtime metadata (image.ref.name etc.), not
+// the manifest blob's own annotations either.
+func (r *registry) readArtifactFromSave(
+	ctx context.Context, ref string,
+) (string, map[string]string) {
+	rc, err := r.client.ImageSave(ctx, []string{ref})
+	if err != nil {
+		return "", nil
 	}
+	defer func() { _ = rc.Close() }()
 
-	for _, m := range res.Manifests {
-		if m.Descriptor.ArtifactType != "" {
-			return m.Descriptor.ArtifactType, m.Descriptor.Annotations
+	return parseArtifactFromSaveTar(rc)
+}
+
+// parseArtifactFromSaveTar walks the tar entries and returns as
+// soon as the manifest blob (small) has been read, leaving any
+// remaining layer blobs unstreamed. Caller closes the underlying
+// reader to abort the in-flight ImageSave.
+func parseArtifactFromSaveTar(r io.Reader) (string, map[string]string) {
+	tr := tar.NewReader(r)
+
+	var (
+		indexData     []byte
+		manifestBlobs = map[string][]byte{}
+		wantDigest    string
+	)
+
+	for {
+		hdr, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return "", nil
+		}
+
+		switch {
+		case hdr.Name == ociIndexFilename:
+			data, readErr := io.ReadAll(tr)
+			if readErr != nil {
+				return "", nil
+			}
+
+			indexData = data
+
+			var index struct {
+				Manifests []ocispec.Descriptor `json:"manifests"`
+			}
+			if jsonErr := json.Unmarshal(indexData, &index); jsonErr == nil &&
+				len(index.Manifests) > 0 {
+				wantDigest = index.Manifests[0].Digest.Encoded()
+			}
+
+		case strings.HasPrefix(hdr.Name, "blobs/sha256/"):
+			// Skip any blob clearly larger than a manifest. OCI
+			// manifests are small JSON (typically <10 KiB); layer
+			// blobs are MB+. This avoids buffering layer bytes
+			// while we wait for the manifest entry.
+			if hdr.Size > 256*1024 {
+				if _, copyErr := io.CopyN(io.Discard, tr, maxLayerDiscardBytes); copyErr != nil && !errors.Is(copyErr, io.EOF) {
+					return "", nil
+				}
+
+				continue
+			}
+
+			data, readErr := io.ReadAll(tr)
+			if readErr != nil {
+				return "", nil
+			}
+
+			manifestBlobs[path.Base(hdr.Name)] = data
+
+			// If we already know which blob is the manifest and
+			// just read it, stop reading the tar.
+			if wantDigest != "" && path.Base(hdr.Name) == wantDigest {
+				return extractArtifact(manifestBlobs[wantDigest])
+			}
 		}
 	}
 
-	if res.Descriptor != nil {
-		return "", res.Descriptor.Annotations
+	if wantDigest == "" {
+		return "", nil
+	}
+
+	if blob, ok := manifestBlobs[wantDigest]; ok {
+		return extractArtifact(blob)
 	}
 
 	return "", nil
+}
+
+// extractArtifact pulls artifactType + annotations out of a parsed
+// manifest blob. Walks the multi-arch index path: if the top-level
+// blob is itself an index without artifactType, the first child
+// platform manifest's value wins (mirrors how openotters builds
+// stamp the type on the whole image, not per-platform).
+func extractArtifact(blob []byte) (string, map[string]string) {
+	var manifest struct {
+		ArtifactType string            `json:"artifactType"`
+		Annotations  map[string]string `json:"annotations"`
+		Manifests    []struct {
+			ArtifactType string            `json:"artifactType"`
+			Annotations  map[string]string `json:"annotations"`
+		} `json:"manifests"`
+	}
+
+	if err := json.Unmarshal(blob, &manifest); err != nil {
+		return "", nil
+	}
+
+	if manifest.ArtifactType != "" {
+		return manifest.ArtifactType, manifest.Annotations
+	}
+
+	for _, m := range manifest.Manifests {
+		if m.ArtifactType != "" {
+			return m.ArtifactType, manifest.Annotations
+		}
+	}
+
+	return "", manifest.Annotations
 }
 
 func firstNonEmpty(values ...string) string {
@@ -342,7 +484,7 @@ func readManifestFromSaveTar(r io.Reader) ([]byte, error) {
 		}
 
 		switch {
-		case hdr.Name == "index.json":
+		case hdr.Name == ociIndexFilename:
 			data, readErr := io.ReadAll(tr)
 			if readErr != nil {
 				return nil, readErr
