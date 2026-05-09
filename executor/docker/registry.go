@@ -9,6 +9,7 @@ import (
 	"io"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	mobyclient "github.com/moby/moby/client"
@@ -30,6 +31,20 @@ import (
 // where appropriate.
 type registry struct {
 	client Client
+
+	// artifactCache memoises lookupArtifact's
+	// (artifactType, annotations) result by Docker image ID.
+	// ImageSave streams the entire image tar just to read the
+	// manifest blob — paying that on every /images and /bins
+	// listing render is the dominant cost in the UI. Caching by
+	// ID (content-addressed) is safe across tag re-pushes; Remove
+	// invalidates the entry before the underlying ID disappears.
+	artifactCache sync.Map // map[string]artifactCacheEntry
+}
+
+type artifactCacheEntry struct {
+	artifactType string
+	annotations  map[string]string
 }
 
 func newRegistry(client Client) *registry {
@@ -125,9 +140,8 @@ func (r *registry) Inspect(ctx context.Context, ref string) (executor.ImageInfo,
 	// can filter by spec.AgentArtifactType / spec.BinArtifactType.
 	// `cli.ImageInspect` doesn't surface artifactType — it's part
 	// of the manifest blob, not the image config — so we hydrate
-	// the image once via ImageSave and read it. Cached per ref so
-	// successive Inspects don't re-pay the save cost.
-	artifactType, annotations := r.lookupArtifact(ctx, ref)
+	// the image once via ImageSave and cache by image ID.
+	artifactType, annotations := r.lookupArtifactByID(ctx, id)
 
 	description := pickLabel(labels, ocispec.AnnotationDescription, "description")
 	source := pickLabel(labels, ocispec.AnnotationSource, "source")
@@ -152,22 +166,28 @@ func (r *registry) Inspect(ctx context.Context, ref string) (executor.ImageInfo,
 	}, nil
 }
 
-// lookupArtifact resolves ref's manifest via ImageSave + parse and
-// returns artifactType + manifest annotations. Empty strings on any
-// failure — Inspect tolerates missing artifactType (the resulting
-// ImageInfo.MediaType falls back to the manifest mediaType, which
-// surfaces in CLI listings as "<unfiltered>" rather than vanishing).
+// lookupArtifactByID resolves an image's manifest via ImageSave +
+// parse and returns artifactType + manifest annotations. Cached by
+// image ID: ImageSave streams the entire image tar to extract one
+// JSON file, which is the dominant cost when /images and /bins
+// rendering walks N entries. Empty strings on any failure — Inspect
+// tolerates missing artifactType (ImageInfo.MediaType falls back to
+// the manifest mediaType).
 //
-// This is intentionally not cached on the registry struct: docker
-// tag → digest mappings can change underfoot (re-pushes, untag),
-// and the freshness matters more than the few-MB-per-call save.
-// `image ls` lazily walks N images, paying one save per ref.
-func (r *registry) lookupArtifact(
-	ctx context.Context, ref string,
+// Cache key is the docker image ID (content-addressed), so two tags
+// pointing at the same digest share one cache entry. Remove
+// invalidates the entry before the underlying ID disappears.
+func (r *registry) lookupArtifactByID(
+	ctx context.Context, id string,
 ) (string, map[string]string) {
-	id, err := resolveImageID(ctx, r.client, ref)
-	if err != nil || id == "" {
+	if id == "" {
 		return "", nil
+	}
+
+	if v, ok := r.artifactCache.Load(id); ok {
+		e, _ := v.(artifactCacheEntry)
+
+		return e.artifactType, e.annotations
 	}
 
 	rc, err := r.client.ImageSave(ctx, []string{id})
@@ -194,20 +214,26 @@ func (r *registry) lookupArtifact(
 		return "", nil
 	}
 
-	if manifest.ArtifactType != "" {
-		return manifest.ArtifactType, manifest.Annotations
-	}
+	artifactType := manifest.ArtifactType
+	if artifactType == "" {
+		// Multi-arch indexes carry artifactType on the index AND/OR
+		// on each child. Pick the first non-empty child's value as
+		// the effective type.
+		for _, m := range manifest.Manifests {
+			if m.ArtifactType != "" {
+				artifactType = m.ArtifactType
 
-	// Multi-arch indexes carry artifactType on the index AND/OR on
-	// each child. Pick the first non-empty child's value as the
-	// effective type.
-	for _, m := range manifest.Manifests {
-		if m.ArtifactType != "" {
-			return m.ArtifactType, manifest.Annotations
+				break
+			}
 		}
 	}
 
-	return "", manifest.Annotations
+	r.artifactCache.Store(id, artifactCacheEntry{
+		artifactType: artifactType,
+		annotations:  manifest.Annotations,
+	})
+
+	return artifactType, manifest.Annotations
 }
 
 func firstNonEmpty(values ...string) string {
@@ -254,10 +280,15 @@ func (r *registry) Remove(ctx context.Context, ref string) error {
 	})
 	if err != nil {
 		if isNotFoundErr(err) {
+			r.artifactCache.Delete(id)
+
 			return fmt.Errorf("%w: %s", executor.ErrRefNotFound, ref)
 		}
 		return fmt.Errorf("docker: ImageRemove %s: %w", ref, err)
 	}
+
+	r.artifactCache.Delete(id)
+
 	return nil
 }
 
