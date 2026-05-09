@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	goruntime "runtime"
 
 	"github.com/go-git/go-billy/v6"
 	"github.com/go-git/go-billy/v6/osfs"
@@ -101,6 +102,7 @@ func Build(
 	return packManifest(ctx, dst, af, layers)
 }
 
+//nolint:funlen // single-shot manifest assembly; splitting fragments the data flow
 func packManifest(
 	ctx context.Context,
 	dst oras.Target,
@@ -139,8 +141,18 @@ func packManifest(
 		configLabels[v1.AnnotationSource] = src
 	}
 
+	// Architecture / OS are content-irrelevant for openotters agents
+	// (the agent's actual runtime is image-mounted from a separate
+	// multi-arch image), but docker's cli.ImageInspect platform-
+	// filters its Config response and returns empty Labels for
+	// images stamped with "unknown". Stamp the build host's platform
+	// so the daemon hosting the build surfaces the artifactType label
+	// correctly. Cross-host pulls re-stamp on rebuild.
 	imgConfig := v1.Image{
-		Platform: v1.Platform{Architecture: "unknown", OS: "unknown"},
+		Platform: v1.Platform{
+			Architecture: goruntime.GOARCH,
+			OS:           goruntime.GOOS,
+		},
 		Config: v1.ImageConfig{
 			Labels: configLabels,
 		},
