@@ -48,6 +48,7 @@ type instruction struct {
 	Exec    *execInst    `| @@`
 	Label   *labelInst   `| @@`
 	Arg     *argInst     `| @@`
+	Env     *envInst     `| @@`
 }
 
 type contextInst struct {
@@ -88,4 +89,10 @@ type labelInst struct {
 type argInst struct {
 	Key   string  `"ARG" @Ident`
 	Value *string `( "=" @( Ident | String ) )?`
+}
+
+type envInst struct {
+	Key   string  `"ENV" @Ident "="`
+	Value string  `@( Ident | String )`
+	Desc  *string `@String?`
 }

@@ -537,6 +537,74 @@ CONFIG port="8080" "Quoted number stays string"
 	}
 }
 
+func TestParse_EnvVars(t *testing.T) {
+	t.Parallel()
+
+	input := `FROM scratch
+ENV NODE_ENV=production "Application environment"
+ENV LOG_LEVEL=debug
+ENV GREETING="hello world" "Quoted with spaces"
+ENV STRIPE_PUBLISHABLE_KEY=pk_live_abc123
+`
+	af, err := spec.Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	envs := af.Agent.Envs
+	if len(envs) != 4 {
+		t.Fatalf("envs = %d, want 4", len(envs))
+	}
+
+	cases := []struct {
+		key, value, desc string
+	}{
+		{"NODE_ENV", "production", "Application environment"},
+		{"LOG_LEVEL", "debug", ""},
+		{"GREETING", "hello world", "Quoted with spaces"},
+		{"STRIPE_PUBLISHABLE_KEY", "pk_live_abc123", ""},
+	}
+
+	for i, want := range cases {
+		got := envs[i]
+		if got.Key != want.key || got.Value != want.value || got.Description != want.desc {
+			t.Errorf("envs[%d] = {%q, %q, %q}, want {%q, %q, %q}",
+				i, got.Key, got.Value, got.Description, want.key, want.value, want.desc)
+		}
+	}
+}
+
+func TestParse_EnvReservedKeys(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name, line, contains string
+	}{
+		{"PATH", `ENV PATH=/foo`, "reserved"},
+		{"HOME", `ENV HOME=/tmp`, "reserved"},
+		{"OTTERS_AGENT_ROOT", `ENV OTTERS_AGENT_ROOT=/x`, "reserved"},
+		{"trailing_API_KEY", `ENV STRIPE_API_KEY=sk_test`, "_API_KEY"},
+		{"trailing_API_BASE", `ENV STRIPE_API_BASE=https://api.stripe.com`, "_API_BASE"},
+		{"lowercase", `ENV node_env=production`, "uppercase"},
+		{"leading_digit", `ENV 1FOO=bar`, "uppercase"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			input := "FROM scratch\n" + tc.line + "\n"
+			_, err := spec.Parse(strings.NewReader(input))
+			if err == nil {
+				t.Fatalf("expected validation error, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.contains) {
+				t.Errorf("error = %q, want substring %q", err.Error(), tc.contains)
+			}
+		})
+	}
+}
+
 func TestParse_FROMFirstWithComments(t *testing.T) {
 	t.Parallel()
 

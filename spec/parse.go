@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -175,6 +176,13 @@ func applyInstruction(agent *Agent, inst *instruction, heredoc string) {
 		if inst.Arg.Value != nil {
 			agent.Args[inst.Arg.Key] = *inst.Arg.Value
 		}
+
+	case inst.Env != nil:
+		e := &Env{Key: inst.Env.Key, Value: inst.Env.Value}
+		if inst.Env.Desc != nil {
+			e.Description = *inst.Env.Desc
+		}
+		agent.Envs = append(agent.Envs, e)
 	}
 }
 
@@ -360,6 +368,55 @@ func Validate(af *Agentfile) error {
 		if cfg.Required && cfg.Value != nil {
 			return fmt.Errorf("config %s: required configs cannot have a default value", cfg.Key)
 		}
+	}
+
+	for _, env := range af.Agent.Envs {
+		if err := validateEnvKey(env.Key); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// reservedEnvKeys are produced by executor.BuildLockedEnv and must
+// not be overridden by user-declared ENV — overriding them breaks
+// the sandbox contract (PATH points at the agent's BIN dirs, HOME /
+// XDG_* / TMPDIR / OTTERS_AGENT_ROOT anchor the materialised tree).
+//
+//nolint:gochecknoglobals // immutable allowlist consulted by validateEnvKey
+var reservedEnvKeys = map[string]struct{}{
+	"PATH":              {},
+	"HOME":              {},
+	"XDG_CONFIG_HOME":   {},
+	"XDG_CACHE_HOME":    {},
+	"XDG_DATA_HOME":     {},
+	"TMPDIR":            {},
+	"LANG":              {},
+	"OTTERS_AGENT_ROOT": {},
+}
+
+// envKeyPattern matches POSIX-style env var names: leading letter or
+// underscore, then letters / digits / underscores. Uppercase only —
+// lowercase env vars work but are unconventional and almost always
+// a typo for a config knob (which goes through CONFIG, not ENV).
+var envKeyPattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`) //nolint:gochecknoglobals // compiled once
+
+func validateEnvKey(key string) error {
+	if key == "" {
+		return fmt.Errorf("ENV key cannot be empty")
+	}
+
+	if !envKeyPattern.MatchString(key) {
+		return fmt.Errorf("ENV %s: key must match %s (uppercase letters, digits, underscore; cannot start with a digit)", key, envKeyPattern)
+	}
+
+	if _, reserved := reservedEnvKeys[key]; reserved {
+		return fmt.Errorf("ENV %s: key is reserved by the locked-down agent env (PATH/HOME/XDG_*/TMPDIR/LANG/OTTERS_AGENT_ROOT)", key)
+	}
+
+	if strings.HasSuffix(key, "_API_KEY") || strings.HasSuffix(key, "_API_BASE") {
+		return fmt.Errorf("ENV %s: keys ending in _API_KEY / _API_BASE are reserved for provider credentials — declare a provider model instead", key)
 	}
 
 	return nil

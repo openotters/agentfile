@@ -17,6 +17,7 @@ type Agent struct {
 	Exec     []string          `json:"exec,omitempty"`
 	Labels   map[string]string `json:"labels,omitempty"`
 	Args     map[string]string `json:"args,omitempty"`
+	Envs     []*Env            `json:"envs,omitempty"`
 }
 
 type Context struct {
@@ -38,6 +39,21 @@ type Bin struct {
 	Image       string `json:"image"`
 	Description string `json:"description,omitempty"`
 	Usage       string `json:"usage,omitempty"`
+}
+
+// Env declares an OS environment variable to be set on the spawned
+// agent process. Unlike Config (a runtime-SDK knob the agent reads
+// via the runtime API) and Arg (build-time substitution), Env values
+// land directly on os/exec's Cmd.Env (system executor) and
+// container.Config.Env (docker executor).
+//
+// Reserved keys (PATH, HOME, XDG_*, TMPDIR, LANG, OTTERS_AGENT_ROOT,
+// any *_API_KEY / *_API_BASE) are rejected by Validate to keep the
+// locked-down env contract intact.
+type Env struct {
+	Key         string `json:"key"`
+	Value       string `json:"value"`
+	Description string `json:"description,omitempty"`
 }
 
 type Add struct {
