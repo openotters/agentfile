@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/openotters/agentfile/executor"
+	"github.com/openotters/agentfile/spec"
 )
 
 func TestContainerSpec_BuildConfig(t *testing.T) {
@@ -55,6 +56,52 @@ func TestContainerSpec_BuildConfig(t *testing.T) {
 	if got := cfg.Labels["io.openotters.agent"]; got != "true" {
 		t.Errorf("missing io.openotters.agent label: %v", cfg.Labels)
 	}
+}
+
+func TestContainerSpec_BuildConfig_AppendsUserEnvs(t *testing.T) {
+	t.Parallel()
+
+	cs := containerSpec{
+		BaseImage: "gcr.io/distroless/static-debian12:nonroot",
+		Model:     "anthropic/m",
+		Provider:  "anthropic",
+		APIKey:    "k",
+		BINImages: map[string]string{"ping": "ghcr.io/openotters/tools/ping:latest"},
+		UserEnvs: []*spec.Env{
+			{Key: "NODE_ENV", Value: "production"},
+			{Key: "FEATURE_X", Value: "on"},
+			// Reserved: filtered defensively even though
+			// spec.Validate would reject these at build time.
+			{Key: "PATH", Value: "/evil"},
+			{Key: "OPENAI_API_KEY", Value: "sk_test"},
+		},
+	}
+
+	cfg := cs.buildConfig()
+
+	envHas := func(want string) {
+		t.Helper()
+		for _, e := range cfg.Env {
+			if e == want {
+				return
+			}
+		}
+		t.Errorf("missing %q in env: %v", want, cfg.Env)
+	}
+	envHasNoKey := func(key string) {
+		t.Helper()
+		for _, e := range cfg.Env {
+			if strings.HasPrefix(e, key+"=") && e != "PATH=/opt/bins/ping" {
+				t.Errorf("unexpected entry %q (key %s leaked from user envs)", e, key)
+			}
+		}
+	}
+
+	envHas("NODE_ENV=production")
+	envHas("FEATURE_X=on")
+	// PATH from the locked-down base survives; user-declared override is filtered.
+	envHas("PATH=/opt/bins/ping")
+	envHasNoKey("OPENAI_API_KEY")
 }
 
 func TestContainerSpec_BuildHostConfig(t *testing.T) {

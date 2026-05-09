@@ -322,6 +322,11 @@ func (a *Agent) create(ctx context.Context) error {
 
 	provider, _ := splitProviderPrefix(rt.Model)
 
+	var userEnvs []*spec.Env
+	if rt.Source != nil && rt.Source.Agent != nil {
+		userEnvs = rt.Source.Agent.Envs
+	}
+
 	cs := containerSpec{
 		Name:          "otters-" + a.deps.id.String(),
 		BaseImage:     a.deps.baseImage,
@@ -335,6 +340,7 @@ func (a *Agent) create(ctx context.Context) error {
 		Provider:      provider,
 		Model:         rt.Model,
 		HostGRPCPort:  a.deps.hostGRPCPort,
+		UserEnvs:      userEnvs,
 	}
 
 	resp, err := a.deps.client.ContainerCreate(ctx, mobyclient.ContainerCreateOptions{

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/openotters/agentfile/executor"
+	"github.com/openotters/agentfile/spec"
 )
 
 func TestBuildCmdArgs_DefaultsToServe(t *testing.T) {
@@ -266,6 +267,33 @@ func TestBuildCmdEnv_NoProviderInModel(t *testing.T) {
 			t.Errorf("unexpected provider-style entry %q", e)
 		}
 	}
+}
+
+func TestBuildCmdEnv_AppendsUserEnv(t *testing.T) {
+	t.Parallel()
+
+	rt := &executor.Runtime{
+		Source: &spec.Agentfile{Agent: &spec.Agent{
+			Envs: []*spec.Env{
+				{Key: "NODE_ENV", Value: "production"},
+				{Key: "FEATURE_X", Value: "on"},
+				// Reserved keys would normally be rejected by
+				// spec.Validate; AppendUserEnv filters defensively.
+				{Key: "PATH", Value: "/evil"},
+				{Key: "STRIPE_API_KEY", Value: "sk_test"},
+			},
+		}},
+		ResolvedConfig: executor.ResolvedConfig{Model: "anthropic/m", APIKey: "k"},
+	}
+
+	env := buildCmdEnv(rt, "/r")
+
+	envHas(t, env, "NODE_ENV=production")
+	envHas(t, env, "FEATURE_X=on")
+	// PATH from the locked-down base survives; the user-declared
+	// override is filtered.
+	envHas(t, env, "PATH=/r/usr/bin")
+	envHasNoKey(t, env, "STRIPE_API_KEY")
 }
 
 func hasPrefix(s, prefix string) bool {

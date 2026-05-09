@@ -87,18 +87,23 @@ func buildCmdEnv(rt *executor.Runtime, rootDir string) []string {
 	})
 
 	provider, _ := splitProviderPrefix(rt.Model)
-	if provider == "" {
-		return env
+	if provider != "" {
+		prefix := strings.ToUpper(provider)
+
+		if rt.APIKey != "" {
+			env = append(env, prefix+"_API_KEY="+rt.APIKey)
+		}
+
+		if rt.APIBase != "" {
+			env = append(env, prefix+"_API_BASE="+rt.APIBase)
+		}
 	}
 
-	prefix := strings.ToUpper(provider)
-
-	if rt.APIKey != "" {
-		env = append(env, prefix+"_API_KEY="+rt.APIKey)
-	}
-
-	if rt.APIBase != "" {
-		env = append(env, prefix+"_API_BASE="+rt.APIBase)
+	// User-declared ENV from the agentspec, last so it can shadow
+	// nothing reserved (AppendUserEnv filters reserved keys; spec
+	// validation already rejects them at build time).
+	if rt.Source != nil && rt.Source.Agent != nil {
+		env, _ = executor.AppendUserEnv(env, rt.Source.Agent.Envs)
 	}
 
 	return env

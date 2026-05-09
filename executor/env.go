@@ -3,6 +3,8 @@ package executor
 import (
 	"path/filepath"
 	"strings"
+
+	"github.com/openotters/agentfile/spec"
 )
 
 // EnvOptions configure the locked-down environment that Executor
@@ -61,4 +63,64 @@ func BuildLockedEnv(opts EnvOptions) []string {
 		"LANG=C.UTF-8",
 		"OTTERS_AGENT_ROOT=" + opts.AgentRoot,
 	}
+}
+
+// reservedRuntimeEnvKeys are the keys produced by BuildLockedEnv.
+// AppendUserEnv refuses to overwrite them — overriding any of these
+// breaks the sandbox guarantees (PATH points at the agent's BIN
+// dirs, HOME / XDG_* / TMPDIR / OTTERS_AGENT_ROOT anchor the
+// materialised tree). spec.Validate already rejects user envs with
+// these keys at build time; the runtime check here is a belt-and-
+// braces filter for malformed agent.yaml.
+//
+//nolint:gochecknoglobals // immutable allowlist consulted by AppendUserEnv
+var reservedRuntimeEnvKeys = map[string]struct{}{
+	"PATH":              {},
+	"HOME":              {},
+	"XDG_CONFIG_HOME":   {},
+	"XDG_CACHE_HOME":    {},
+	"XDG_DATA_HOME":     {},
+	"TMPDIR":            {},
+	"LANG":              {},
+	"OTTERS_AGENT_ROOT": {},
+}
+
+// AppendUserEnv appends user-declared envs onto a base built by
+// BuildLockedEnv (and any provider-cred entries the caller has
+// already added). Entries are appended in declaration order; later
+// duplicates win, matching os/exec's "last one wins" semantics.
+//
+// Reserved keys (the locked-env keys, plus *_API_KEY / *_API_BASE
+// suffixes used for provider creds) are filtered defensively. The
+// returned skipped slice carries the offending keys so the caller
+// can log them once. spec.Validate rejects these at build time;
+// runtime filtering here is a safety net for malformed agent.yaml.
+func AppendUserEnv(base []string, userEnvs []*spec.Env) (env []string, skipped []string) {
+	if len(userEnvs) == 0 {
+		return base, nil
+	}
+
+	env = base
+
+	for _, e := range userEnvs {
+		if e == nil || e.Key == "" {
+			continue
+		}
+
+		if _, reserved := reservedRuntimeEnvKeys[e.Key]; reserved {
+			skipped = append(skipped, e.Key)
+
+			continue
+		}
+
+		if strings.HasSuffix(e.Key, "_API_KEY") || strings.HasSuffix(e.Key, "_API_BASE") {
+			skipped = append(skipped, e.Key)
+
+			continue
+		}
+
+		env = append(env, e.Key+"="+e.Value)
+	}
+
+	return env, skipped
 }

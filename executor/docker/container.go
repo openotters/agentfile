@@ -10,6 +10,7 @@ import (
 	networktypes "github.com/moby/moby/api/types/network"
 
 	"github.com/openotters/agentfile/executor"
+	"github.com/openotters/agentfile/spec"
 )
 
 // containerLayout describes the in-container paths the agent sees.
@@ -65,6 +66,12 @@ type containerSpec struct {
 	Model    string
 
 	HostGRPCPort string // loopback port on host that maps to agentGRPCPort
+
+	// UserEnvs are agentspec ENV declarations appended onto the
+	// locked-down env after provider creds. spec.Validate rejects
+	// reserved keys at build time; AppendUserEnv filters defensively
+	// at runtime.
+	UserEnvs []*spec.Env
 }
 
 // buildConfig assembles the moby Container.Config for the agent's
@@ -181,6 +188,8 @@ func (s *containerSpec) buildEnv() []string {
 			env = append(env, fmt.Sprintf("%s_API_BASE=%s", prefix, s.APIBase))
 		}
 	}
+
+	env, _ = executor.AppendUserEnv(env, s.UserEnvs)
 
 	return env
 }

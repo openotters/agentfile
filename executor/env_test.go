@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/openotters/agentfile/executor"
+	"github.com/openotters/agentfile/spec"
 )
 
 func TestBuildLockedEnv_OnlyCuratedKeys(t *testing.T) {
@@ -59,6 +60,85 @@ func TestBuildLockedEnv_MultipleBinDirsJoinedWithColon(t *testing.T) {
 		}
 	}
 	t.Errorf("missing %q in env: %v", want, env)
+}
+
+func TestAppendUserEnv_AppendsInOrder(t *testing.T) {
+	t.Parallel()
+
+	base := []string{"PATH=/usr/bin", "HOME=/agents/x/home"}
+	envs := []*spec.Env{
+		{Key: "NODE_ENV", Value: "production"},
+		{Key: "LOG_LEVEL", Value: "debug"},
+	}
+
+	got, skipped := executor.AppendUserEnv(base, envs)
+	if len(skipped) != 0 {
+		t.Errorf("skipped = %v, want none", skipped)
+	}
+
+	want := []string{"PATH=/usr/bin", "HOME=/agents/x/home", "NODE_ENV=production", "LOG_LEVEL=debug"}
+	if len(got) != len(want) {
+		t.Fatalf("got %d entries, want %d (%v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("got[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestAppendUserEnv_FiltersReservedKeys(t *testing.T) {
+	t.Parallel()
+
+	base := []string{"PATH=/usr/bin"}
+	envs := []*spec.Env{
+		{Key: "PATH", Value: "/evil"},
+		{Key: "HOME", Value: "/evil"},
+		{Key: "OTTERS_AGENT_ROOT", Value: "/evil"},
+		{Key: "STRIPE_API_KEY", Value: "sk_test"},
+		{Key: "OPENAI_API_BASE", Value: "https://evil"},
+		{Key: "NODE_ENV", Value: "production"},
+	}
+
+	got, skipped := executor.AppendUserEnv(base, envs)
+
+	wantSkipped := []string{"PATH", "HOME", "OTTERS_AGENT_ROOT", "STRIPE_API_KEY", "OPENAI_API_BASE"}
+	if len(skipped) != len(wantSkipped) {
+		t.Fatalf("skipped = %v, want %v", skipped, wantSkipped)
+	}
+	for i, k := range wantSkipped {
+		if skipped[i] != k {
+			t.Errorf("skipped[%d] = %q, want %q", i, skipped[i], k)
+		}
+	}
+
+	// Only the legal entry survived.
+	want := []string{"PATH=/usr/bin", "NODE_ENV=production"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("got[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestAppendUserEnv_NilOrEmpty(t *testing.T) {
+	t.Parallel()
+
+	base := []string{"PATH=/usr/bin"}
+
+	got1, skipped1 := executor.AppendUserEnv(base, nil)
+	if len(skipped1) != 0 || len(got1) != 1 || got1[0] != "PATH=/usr/bin" {
+		t.Errorf("nil: got=%v skipped=%v", got1, skipped1)
+	}
+
+	got2, _ := executor.AppendUserEnv(base, []*spec.Env{nil, {Key: ""}, {Key: "OK", Value: "v"}})
+	want2 := []string{"PATH=/usr/bin", "OK=v"}
+	if len(got2) != len(want2) {
+		t.Fatalf("got %v, want %v", got2, want2)
+	}
 }
 
 func TestBuildLockedEnv_NoHostInheritance(t *testing.T) {
