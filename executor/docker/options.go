@@ -51,3 +51,29 @@ func WithLogDir(dir string) ProviderOption {
 func WithMounts(m []executor.Mount) ProviderOption {
 	return func(p *Provider) { p.mounts = m }
 }
+
+// AgentOption configures one Agent at Create time. Mirrors the
+// system executor's per-agent option mechanism (see
+// agentfile/executor/system/options.go); both packages expose
+// "provider creates agents" + "callers may layer per-agent config"
+// so the openotters daemon's pool.createAgent can thread daemon
+// URL / agent token / log writers / etc. without polluting the
+// abstract executor.Provider.Create signature.
+type AgentOption func(*agentDeps)
+
+// WithDaemonSocket sets the host filesystem path of the openotters
+// daemon's unix socket. The docker backend bind-mounts it into the
+// container at a fixed in-container path and exposes it to the
+// runtime as OTTERSD_URL=unix://<in-container-path>. Empty disables
+// both the mount and the env var.
+func WithDaemonSocket(hostPath string) AgentOption {
+	return func(d *agentDeps) { d.daemonSocket = hostPath }
+}
+
+// WithAgentToken sets the JWT minted by the daemon for this agent;
+// injected into the container env as OTTERS_AGENT_TOKEN. Empty
+// disables the env var (runtime spawns fine — outbound daemon
+// calls just fail Unauthenticated).
+func WithAgentToken(token string) AgentOption {
+	return func(d *agentDeps) { d.agentToken = token }
+}

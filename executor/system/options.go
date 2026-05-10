@@ -163,6 +163,25 @@ func WithAddr(addr string) AgentOption {
 	return func(a *Agent) { a.addr = addr }
 }
 
+// WithDaemonSocket sets the host filesystem path of the openotters
+// daemon's unix socket. The system backend exposes it to the runtime
+// as OTTERSD_URL=unix://<path> — the chrooted runtime can dial the
+// host socket directly since the chroot is just billy-rooted, not a
+// real syscall chroot. Empty disables the env var.
+func WithDaemonSocket(hostPath string) AgentOption {
+	return func(a *Agent) { a.daemonSocket = hostPath }
+}
+
+// WithAgentToken sets the JWT minted by the daemon for this agent;
+// injected into the spawn env as OTTERS_AGENT_TOKEN. The runtime
+// presents it as `Authorization: Bearer …` on every outbound RPC.
+// Empty disables the env var (runtime can still spawn — outbound
+// daemon calls would fail Unauthenticated, which is the desired
+// behaviour when the agent isn't supposed to call back).
+func WithAgentToken(token string) AgentOption {
+	return func(a *Agent) { a.agentToken = token }
+}
+
 // WithMounts attaches bind-mount specs to the agent. The symlinks
 // are created by workspace.applyMounts at the end of materialize
 // (or via Agent.ReapplyMounts on restore).

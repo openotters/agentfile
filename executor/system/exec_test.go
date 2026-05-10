@@ -146,7 +146,7 @@ func TestProcessServe_HappyPath(t *testing.T) {
 
 	p := &process{spawner: execer, stdout: io.Discard, stderr: io.Discard}
 
-	if err := p.serve(context.Background(), p.buildCmdFn(newTestRT(), "/r")); err != nil {
+	if err := p.serve(context.Background(), p.buildCmdFn(newTestRT(), "/r", "", "")); err != nil {
 		t.Fatalf("serve: %v", err)
 	}
 
@@ -181,7 +181,7 @@ func TestProcessServe_StartError(t *testing.T) {
 
 	p := &process{spawner: execer, stdout: io.Discard, stderr: io.Discard}
 
-	err := p.serve(context.Background(), p.buildCmdFn(newTestRT(), "/r"))
+	err := p.serve(context.Background(), p.buildCmdFn(newTestRT(), "/r", "", ""))
 	if err == nil || !strings.Contains(err.Error(), "starting runtime") {
 		t.Fatalf("serve err = %v, want wrapped 'starting runtime'", err)
 	}
@@ -201,7 +201,7 @@ func TestProcessServe_ExitErrorPropagates(t *testing.T) {
 
 	p := &process{spawner: execer, stdout: io.Discard, stderr: io.Discard}
 
-	if err := p.serve(context.Background(), p.buildCmdFn(newTestRT(), "/r")); !errors.Is(err, exitErr) {
+	if err := p.serve(context.Background(), p.buildCmdFn(newTestRT(), "/r", "", "")); !errors.Is(err, exitErr) {
 		t.Fatalf("serve err = %v, want %v", err, exitErr)
 	}
 }
@@ -229,7 +229,7 @@ func TestProcessServe_CtxCancelSignalsThenWaits(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	done := make(chan error, 1)
-	go func() { done <- p.serve(ctx, p.buildCmdFn(newTestRT(), "/r")) }()
+	go func() { done <- p.serve(ctx, p.buildCmdFn(newTestRT(), "/r", "", "")) }()
 
 	// Let serve register p.cmd + spawn the Wait goroutine.
 	time.Sleep(20 * time.Millisecond)

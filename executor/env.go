@@ -31,6 +31,22 @@ type EnvOptions struct {
 	// there is one entry (<AgentRoot>/usr/bin); for docker there
 	// is one entry per BIN image mount.
 	BinDirs []string
+
+	// DaemonURL is the openotters daemon's TCP endpoint
+	// (e.g. http://host.docker.internal:5050) the runtime should
+	// dial back to for daemon-side capabilities (async-jobs RPCs in
+	// the next iteration). Optional — empty means the spawned
+	// runtime gets no OTTERSD_URL and any daemon client lazy-init
+	// no-ops gracefully.
+	DaemonURL string
+
+	// AgentToken is the JWT minted by the daemon at CreateAgent. The
+	// runtime presents it as `Authorization: Bearer …` on every
+	// outbound RPC to DaemonURL. Issued and revoked by the daemon
+	// (see internal/auth on the openotters side). Optional — empty
+	// means no token is exposed and outbound RPCs would fail
+	// Unauthenticated, but the agent process still spawns fine.
+	AgentToken string
 }
 
 // BuildLockedEnv returns the curated environment the runtime should
@@ -42,18 +58,20 @@ type EnvOptions struct {
 //
 // Keys produced:
 //
-//   - PATH                — strings.Join(BinDirs, ":")
-//   - HOME                — <AgentRoot>/home
-//   - XDG_CONFIG_HOME     — <AgentRoot>/home/.config
-//   - XDG_CACHE_HOME      — <AgentRoot>/home/.cache
-//   - XDG_DATA_HOME       — <AgentRoot>/home/.local/share
-//   - TMPDIR              — <AgentRoot>/tmp
-//   - LANG                — C.UTF-8
-//   - OTTERS_AGENT_ROOT   — <AgentRoot>
+//   - PATH                 — strings.Join(BinDirs, ":")
+//   - HOME                 — <AgentRoot>/home
+//   - XDG_CONFIG_HOME      — <AgentRoot>/home/.config
+//   - XDG_CACHE_HOME       — <AgentRoot>/home/.cache
+//   - XDG_DATA_HOME        — <AgentRoot>/home/.local/share
+//   - TMPDIR               — <AgentRoot>/tmp
+//   - LANG                 — C.UTF-8
+//   - OTTERS_AGENT_ROOT    — <AgentRoot>
+//   - OTTERSD_URL          — <DaemonURL>      (omitted when empty)
+//   - OTTERS_AGENT_TOKEN   — <AgentToken>     (omitted when empty)
 func BuildLockedEnv(opts EnvOptions) []string {
 	home := filepath.Join(opts.AgentRoot, "home")
 
-	return []string{
+	env := []string{
 		"PATH=" + strings.Join(opts.BinDirs, ":"),
 		"HOME=" + home,
 		"XDG_CONFIG_HOME=" + filepath.Join(home, ".config"),
@@ -63,6 +81,13 @@ func BuildLockedEnv(opts EnvOptions) []string {
 		"LANG=C.UTF-8",
 		"OTTERS_AGENT_ROOT=" + opts.AgentRoot,
 	}
+	if opts.DaemonURL != "" {
+		env = append(env, "OTTERSD_URL="+opts.DaemonURL)
+	}
+	if opts.AgentToken != "" {
+		env = append(env, "OTTERS_AGENT_TOKEN="+opts.AgentToken)
+	}
+	return env
 }
 
 // reservedRuntimeEnvKeys are the keys produced by BuildLockedEnv.
@@ -75,14 +100,16 @@ func BuildLockedEnv(opts EnvOptions) []string {
 //
 //nolint:gochecknoglobals // immutable allowlist consulted by AppendUserEnv
 var reservedRuntimeEnvKeys = map[string]struct{}{
-	"PATH":              {},
-	"HOME":              {},
-	"XDG_CONFIG_HOME":   {},
-	"XDG_CACHE_HOME":    {},
-	"XDG_DATA_HOME":     {},
-	"TMPDIR":            {},
-	"LANG":              {},
-	"OTTERS_AGENT_ROOT": {},
+	"PATH":               {},
+	"HOME":               {},
+	"XDG_CONFIG_HOME":    {},
+	"XDG_CACHE_HOME":     {},
+	"XDG_DATA_HOME":      {},
+	"TMPDIR":             {},
+	"LANG":               {},
+	"OTTERS_AGENT_ROOT":  {},
+	"OTTERSD_URL":        {},
+	"OTTERS_AGENT_TOKEN": {},
 }
 
 // AppendUserEnv appends user-declared envs onto a base built by

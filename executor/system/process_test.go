@@ -156,7 +156,7 @@ func TestBuildCmdEnv_LockedBaseAlwaysPresent(t *testing.T) {
 	// sees only this list (plus per-provider credentials).
 	env := buildCmdEnv(&executor.Runtime{
 		ResolvedConfig: executor.ResolvedConfig{Model: "anthropic/m"},
-	}, "/agents/abc")
+	}, "/agents/abc", "", "")
 
 	envHas(t, env, "PATH=/agents/abc/usr/bin")
 	envHas(t, env, "HOME=/agents/abc/home")
@@ -179,7 +179,7 @@ func TestBuildCmdEnv_DoesNotInheritHostEnv(t *testing.T) {
 
 	env := buildCmdEnv(&executor.Runtime{
 		ResolvedConfig: executor.ResolvedConfig{Model: "anthropic/m"},
-	}, "/r")
+	}, "/r", "", "")
 
 	envHasNoKey(t, env, "OTTERS_TEST_HOST_CANARY")
 	// Common host-only env vars also shouldn't leak.
@@ -197,7 +197,7 @@ func TestBuildCmdEnv_EmitsProviderCredentials(t *testing.T) {
 		},
 	}
 
-	env := buildCmdEnv(rt, "/r")
+	env := buildCmdEnv(rt, "/r", "", "")
 
 	envHas(t, env, "ANTHROPIC_API_KEY=sk-test-fixture-not-real")
 	envHas(t, env, "ANTHROPIC_API_BASE=https://api.anthropic.com")
@@ -236,7 +236,7 @@ func TestBuildCmdEnv_OmitsAbsentFields(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			env := buildCmdEnv(tc.rt, "/r")
+			env := buildCmdEnv(tc.rt, "/r", "", "")
 			for _, key := range tc.mustNotHave {
 				envHasNoKey(t, env, key)
 			}
@@ -256,7 +256,7 @@ func TestBuildCmdEnv_NoProviderInModel(t *testing.T) {
 			APIKey:  "k",
 			APIBase: "https://x",
 		},
-	}, "/r")
+	}, "/r", "", "")
 
 	envHasKey(t, env, "PATH")
 	envHasKey(t, env, "HOME")
@@ -286,7 +286,7 @@ func TestBuildCmdEnv_AppendsUserEnv(t *testing.T) {
 		ResolvedConfig: executor.ResolvedConfig{Model: "anthropic/m", APIKey: "k"},
 	}
 
-	env := buildCmdEnv(rt, "/r")
+	env := buildCmdEnv(rt, "/r", "", "")
 
 	envHas(t, env, "NODE_ENV=production")
 	envHas(t, env, "FEATURE_X=on")

@@ -259,9 +259,15 @@ func (a *Agent) buildExecContainer(
 		binDirs = append(binDirs, inContainerBinsRoot+"/"+name)
 	}
 
+	var daemonURL string
+	if a.deps.daemonSocket != "" {
+		daemonURL = "unix://" + inContainerDaemonSocket
+	}
 	env := executor.BuildLockedEnv(executor.EnvOptions{
-		AgentRoot: inContainerAgentRoot,
-		BinDirs:   binDirs,
+		AgentRoot:  inContainerAgentRoot,
+		BinDirs:    binDirs,
+		DaemonURL:  daemonURL,
+		AgentToken: a.deps.agentToken,
 	})
 
 	// Provider creds live with the agent; jobs MAY need them too
@@ -363,6 +369,17 @@ func (a *Agent) buildExecContainer(
 			Source:   m.Host,
 			Target:   m.Target,
 			ReadOnly: m.ReadOnly,
+		})
+	}
+
+	// Mirror containerSpec.buildHostConfig — per-job containers also
+	// get the daemon socket mounted so chained jobs (an async job
+	// that itself submits another job) can dial back.
+	if a.deps.daemonSocket != "" {
+		mounts = append(mounts, mounttypes.Mount{
+			Type:   mounttypes.TypeBind,
+			Source: a.deps.daemonSocket,
+			Target: inContainerDaemonSocket,
 		})
 	}
 

@@ -40,6 +40,15 @@ const (
 	// image lays down (typically `/`-rooted).
 	inContainerBinsRoot = "/opt/bins"
 
+	// inContainerDaemonSocket is the well-known in-container path
+	// the openotters daemon's unix socket is bind-mounted to (when
+	// the agent is given a daemon socket via WithDaemonSocket). The
+	// runtime sees this path as OTTERSD_URL=unix:///run/otters/daemon.sock
+	// and dials it for async-job submission, etc. Single source of
+	// truth for the in-container path; mirrored by the daemon when
+	// computing the agent-reachable URL.
+	inContainerDaemonSocket = "/run/otters/daemon.sock"
+
 	// agentGRPCPort is the in-container port the runtime serves
 	// gRPC on. Published to the host on a random loopback port.
 	agentGRPCPort = "9999"
@@ -74,6 +83,15 @@ type containerSpec struct {
 	Model    string
 
 	HostGRPCPort string // loopback port on host that maps to agentGRPCPort
+
+	// DaemonSocket is the host filesystem path of the openotters
+	// daemon's unix socket. When non-empty the container gets a
+	// bind-mount host:DaemonSocket → container:inContainerDaemonSocket
+	// AND the env var OTTERSD_URL=unix://<inContainerDaemonSocket>.
+	// AgentToken is the JWT presented as Authorization: Bearer …
+	// (env var OTTERS_AGENT_TOKEN). Both empty = no daemon reach.
+	DaemonSocket string
+	AgentToken   string
 
 	// UserEnvs are agentspec ENV declarations appended onto the
 	// locked-down env after provider creds. spec.Validate rejects
@@ -165,6 +183,19 @@ func (s *containerSpec) buildHostConfig() *containertypes.HostConfig {
 		})
 	}
 
+	// Bind-mount the openotters daemon's unix socket into the
+	// container at the well-known path so the runtime can dial it
+	// as OTTERSD_URL=unix:///run/otters/daemon.sock. JWT auth is
+	// enforced on every listener — the mount is the transport, the
+	// agent's token is the credential.
+	if s.DaemonSocket != "" {
+		mounts = append(mounts, mounttypes.Mount{
+			Type:   mounttypes.TypeBind,
+			Source: s.DaemonSocket,
+			Target: inContainerDaemonSocket,
+		})
+	}
+
 	containerPort, _ := networktypes.ParsePort(agentGRPCPort + "/tcp")
 
 	hostIP, _ := netip.ParseAddr("127.0.0.1")
@@ -203,9 +234,15 @@ func (s *containerSpec) buildEnv() []string {
 		binDirs = append(binDirs, inContainerBinsRoot+"/"+name)
 	}
 
+	var daemonURL string
+	if s.DaemonSocket != "" {
+		daemonURL = "unix://" + inContainerDaemonSocket
+	}
 	env := executor.BuildLockedEnv(executor.EnvOptions{
-		AgentRoot: inContainerAgentRoot,
-		BinDirs:   binDirs,
+		AgentRoot:  inContainerAgentRoot,
+		BinDirs:    binDirs,
+		DaemonURL:  daemonURL,
+		AgentToken: s.AgentToken,
 	})
 
 	if s.Provider != "" {

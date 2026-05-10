@@ -93,7 +93,19 @@ func NewProvider(root billy.Filesystem, storeFor StoreFor, opts ...ProviderOptio
 // Create returns a new Agent bound to the provided ID + image
 // reference. The agent is not yet started; call Run / Start.
 func (p *Provider) Create(
-	_ context.Context, id uuid.UUID, ref spec.Reference, overrides ...spec.Override,
+	ctx context.Context, id uuid.UUID, ref spec.Reference, overrides ...spec.Override,
+) (executor.Agent, error) {
+	return p.CreateWithOptions(ctx, id, ref, nil, overrides...)
+}
+
+// CreateWithOptions is the per-agent-options variant of Create. The
+// openotters daemon's pool.createAgent uses it to thread daemon URL
+// / agent token / future per-agent injections without changing the
+// abstract executor.Provider.Create signature. Pure additive — Create
+// is a thin wrapper that calls this with no AgentOption.
+func (p *Provider) CreateWithOptions(
+	_ context.Context, id uuid.UUID, ref spec.Reference,
+	agentOpts []AgentOption, overrides ...spec.Override,
 ) (executor.Agent, error) {
 	chrootfs, err := p.root.Chroot(id.String())
 	if err != nil {
@@ -105,7 +117,7 @@ func (p *Provider) Create(
 		return nil, fmt.Errorf("docker: reserve port: %w", err)
 	}
 
-	a := newAgent(agentDeps{
+	deps := agentDeps{
 		id:           id,
 		client:       p.client,
 		baseImage:    p.baseImage,
@@ -119,9 +131,12 @@ func (p *Provider) Create(
 		mounts:       p.mounts,
 		hostGRPCPort: hostPort,
 		logDir:       p.logDir,
-	})
+	}
+	for _, opt := range agentOpts {
+		opt(&deps)
+	}
 
-	return a, nil
+	return newAgent(deps), nil
 }
 
 // Load lists existing agent directories on disk. Currently a stub —

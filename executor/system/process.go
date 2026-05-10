@@ -80,10 +80,16 @@ func buildCmdArgs(rt *executor.Runtime, rootDir string, extraArgs ...string) []s
 //
 // A model without a provider prefix (e.g. "bare-name") yields no
 // credential entries — there is no provider to scope them under.
-func buildCmdEnv(rt *executor.Runtime, rootDir string) []string {
+func buildCmdEnv(rt *executor.Runtime, rootDir, daemonSocket, agentToken string) []string {
+	var daemonURL string
+	if daemonSocket != "" {
+		daemonURL = "unix://" + daemonSocket
+	}
 	env := executor.BuildLockedEnv(executor.EnvOptions{
-		AgentRoot: rootDir,
-		BinDirs:   []string{filepath.Join(rootDir, "usr", "bin")},
+		AgentRoot:  rootDir,
+		BinDirs:    []string{filepath.Join(rootDir, "usr", "bin")},
+		DaemonURL:  daemonURL,
+		AgentToken: agentToken,
 	})
 
 	provider, _ := splitProviderPrefix(rt.Model)
@@ -122,7 +128,7 @@ func splitProviderPrefix(model string) (string, string) {
 	return "", model
 }
 
-func (p *process) buildCmdFn(rt *executor.Runtime, rootDir string) cmdFunc {
+func (p *process) buildCmdFn(rt *executor.Runtime, rootDir, daemonSocket, agentToken string) cmdFunc {
 	runtimeBin := filepath.Join(rootDir, RuntimeBin)
 	stdout := p.stdout
 	stderr := p.stderr
@@ -139,7 +145,7 @@ func (p *process) buildCmdFn(rt *executor.Runtime, rootDir string) cmdFunc {
 		c := spawner.Command(runtimeBin, args...)
 		c.SetStdout(stdout)
 		c.SetStderr(stderr)
-		c.SetEnv(buildCmdEnv(rt, rootDir))
+		c.SetEnv(buildCmdEnv(rt, rootDir, daemonSocket, agentToken))
 		c.SetDir(workspaceDir)
 
 		return c
