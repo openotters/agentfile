@@ -52,5 +52,37 @@ type Agent interface {
 	Stop(ctx context.Context) error
 	Remove(ctx context.Context) error
 
+	// Exec runs a BIN command in this agent's spawn env: same image,
+	// same BIN namespace on PATH, agent workspace as cwd. Implementations
+	// MUST cleanly terminate the underlying execution when ctx is
+	// cancelled — no orphaned processes / no zombie containers.
+	// Returns when the underlying execution exits or is killed.
+	//
+	// `bin` is a name (e.g. "sh", "jq") resolved via PATH inside the
+	// spawn env, NOT a host filesystem path. Unknown names surface as
+	// ExecResult.Err so the caller can distinguish "BIN not declared in
+	// the agent's image" from "BIN ran and exited non-zero."
+	Exec(ctx context.Context, bin string, args []string, stdin string) ExecResult
+
 	StatusObserver
+}
+
+// ExecResult is the captured outcome of one BIN invocation via
+// Agent.Exec. Stdout / Stderr are best-effort: if cancellation
+// truncates the run, what was captured up to that point is returned
+// alongside ctx.Err() in Err.
+type ExecResult struct {
+	Stdout, Stderr string
+	ExitCode       int
+
+	// Err is set for spawn failures (BIN not in PATH inside the
+	// sandbox, container gone, sandbox unavailable) and for
+	// ctx-cancellation (ctx.Err() flows through). Nil when the BIN
+	// ran to completion, regardless of its exit code.
+	Err error
+
+	// Handle is a backend-specific identifier the daemon uses for
+	// boot-time ghost cleanup: a PID for the system backend, a
+	// container ID for docker. Empty when the spawn never happened.
+	Handle string
 }
