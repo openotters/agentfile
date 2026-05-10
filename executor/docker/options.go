@@ -61,13 +61,19 @@ func WithMounts(m []executor.Mount) ProviderOption {
 // abstract executor.Provider.Create signature.
 type AgentOption func(*agentDeps)
 
-// WithDaemonSocket sets the host filesystem path of the openotters
-// daemon's unix socket. The docker backend bind-mounts it into the
-// container at a fixed in-container path and exposes it to the
-// runtime as OTTERSD_URL=unix://<in-container-path>. Empty disables
-// both the mount and the env var.
-func WithDaemonSocket(hostPath string) AgentOption {
-	return func(d *agentDeps) { d.daemonSocket = hostPath }
+// WithDaemonURL sets the openotters daemon's TCP endpoint
+// (e.g. http://host.docker.internal:5500) the runtime should dial
+// back to. Bind-mounting the daemon's unix socket would be cleaner,
+// but Docker Desktop / Colima on macOS refuse to bind-mount unix
+// socket files from the host (`stat: operation not supported`), so
+// docker-executor agents always use TCP. Linux gets a
+// host.docker.internal → host-gateway ExtraHosts entry so the
+// hostname resolves the same way as on macOS.
+//
+// Empty disables OTTERSD_URL injection — the runtime spawns fine,
+// outbound daemon RPCs just fail "no endpoint configured".
+func WithDaemonURL(url string) AgentOption {
+	return func(d *agentDeps) { d.daemonURL = url }
 }
 
 // WithAgentToken sets the JWT minted by the daemon for this agent;

@@ -27,14 +27,15 @@ type Agent struct {
 	addr   string
 	cmdFn  cmdFunc
 	dialer Dialer
-	// daemonSocket + agentToken are injected into the spawn env so
-	// the runtime knows where to dial the openotters daemon and what
+	// daemonURL + agentToken are injected into the spawn env so the
+	// runtime knows where to dial the openotters daemon and what
 	// JWT to present. Both empty by default — agents whose author
-	// doesn't want to expose the daemon path simply don't pass these
-	// options at construction. daemonSocket is a HOST filesystem
-	// path; the system backend exposes it as OTTERSD_URL=unix://<p>.
-	daemonSocket string
-	agentToken   string
+	// doesn't want to expose the daemon path simply don't pass
+	// these options at construction. daemonURL is the dial target
+	// (e.g. unix:///tmp/otters.sock); injected as-is into
+	// OTTERSD_URL.
+	daemonURL  string
+	agentToken string
 
 	initMu      sync.Mutex
 	initialized bool
@@ -273,7 +274,7 @@ func (a *Agent) initialize(ctx context.Context) error {
 		return err
 	}
 
-	a.cmdFn = a.proc.buildCmdFn(rt, a.fs.Root(), a.daemonSocket, a.agentToken)
+	a.cmdFn = a.proc.buildCmdFn(rt, a.fs.Root(), a.daemonURL, a.agentToken)
 	a.rt = rt
 	a.initialized = true
 
@@ -296,7 +297,7 @@ func (a *Agent) markInitialized(rt *executor.Runtime) {
 		a.addr = rt.Addr
 	}
 
-	a.cmdFn = a.proc.buildCmdFn(rt, a.fs.Root(), a.daemonSocket, a.agentToken)
+	a.cmdFn = a.proc.buildCmdFn(rt, a.fs.Root(), a.daemonURL, a.agentToken)
 	a.rt = rt
 	a.initialized = true
 }

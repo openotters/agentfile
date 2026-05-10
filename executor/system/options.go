@@ -163,13 +163,14 @@ func WithAddr(addr string) AgentOption {
 	return func(a *Agent) { a.addr = addr }
 }
 
-// WithDaemonSocket sets the host filesystem path of the openotters
-// daemon's unix socket. The system backend exposes it to the runtime
-// as OTTERSD_URL=unix://<path> — the chrooted runtime can dial the
-// host socket directly since the chroot is just billy-rooted, not a
-// real syscall chroot. Empty disables the env var.
-func WithDaemonSocket(hostPath string) AgentOption {
-	return func(a *Agent) { a.daemonSocket = hostPath }
+// WithDaemonURL sets the openotters daemon URL the runtime should
+// dial back to. Format is backend-conventional: for the system
+// executor, callers typically pass `unix://<host-path>` (the
+// chrooted runtime can dial host paths directly since the chroot is
+// billy-rooted, not a real syscall chroot). Empty disables the
+// env var.
+func WithDaemonURL(url string) AgentOption {
+	return func(a *Agent) { a.daemonURL = url }
 }
 
 // WithAgentToken sets the JWT minted by the daemon for this agent;

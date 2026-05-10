@@ -259,14 +259,10 @@ func (a *Agent) buildExecContainer(
 		binDirs = append(binDirs, inContainerBinsRoot+"/"+name)
 	}
 
-	var daemonURL string
-	if a.deps.daemonSocket != "" {
-		daemonURL = "unix://" + inContainerDaemonSocket
-	}
 	env := executor.BuildLockedEnv(executor.EnvOptions{
 		AgentRoot:  inContainerAgentRoot,
 		BinDirs:    binDirs,
-		DaemonURL:  daemonURL,
+		DaemonURL:  a.deps.daemonURL,
 		AgentToken: a.deps.agentToken,
 	})
 
@@ -372,20 +368,17 @@ func (a *Agent) buildExecContainer(
 		})
 	}
 
-	// Mirror containerSpec.buildHostConfig — per-job containers also
-	// get the daemon socket mounted so chained jobs (an async job
-	// that itself submits another job) can dial back.
-	if a.deps.daemonSocket != "" {
-		mounts = append(mounts, mounttypes.Mount{
-			Type:   mounttypes.TypeBind,
-			Source: a.deps.daemonSocket,
-			Target: inContainerDaemonSocket,
-		})
-	}
-
 	hostCfg := &containertypes.HostConfig{
 		Mounts:     mounts,
 		AutoRemove: false, // we remove explicitly so Inspect can read exit code
+	}
+
+	// Mirror containerSpec — Linux Docker needs host.docker.internal
+	// → host-gateway so chained async jobs can reach the daemon by
+	// the same hostname agents use. Harmless on macOS Docker Desktop
+	// (already provides the mapping).
+	if a.deps.daemonURL != "" && strings.Contains(a.deps.daemonURL, "host.docker.internal") {
+		hostCfg.ExtraHosts = append(hostCfg.ExtraHosts, "host.docker.internal:host-gateway")
 	}
 
 	return cfg, hostCfg, nil

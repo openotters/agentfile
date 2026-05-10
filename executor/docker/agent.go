@@ -39,13 +39,13 @@ type agentDeps struct {
 	mounts       []executor.Mount
 	hostGRPCPort string
 	logDir       string
-	// daemonSocket is the HOST path of the openotters daemon's unix
-	// socket; bind-mounted into the container at
-	// inContainerDaemonSocket. agentToken is the JWT presented by
-	// the runtime when calling the daemon. Both empty by default;
-	// set per-agent via WithDaemonSocket / WithAgentToken.
-	daemonSocket string
-	agentToken   string
+	// daemonURL is the openotters daemon's TCP endpoint (e.g.
+	// http://host.docker.internal:5500) the runtime dials back to.
+	// agentToken is the JWT presented as Authorization: Bearer …
+	// Both empty by default; set per-agent via WithDaemonURL /
+	// WithAgentToken.
+	daemonURL  string
+	agentToken string
 }
 
 // Agent is the Docker-backed implementation of executor.Agent.
@@ -407,7 +407,7 @@ func (a *Agent) create(ctx context.Context) error {
 		Provider:      provider,
 		Model:         rt.Model,
 		HostGRPCPort:  a.deps.hostGRPCPort,
-		DaemonSocket:  a.deps.daemonSocket,
+		DaemonURL:     a.deps.daemonURL,
 		AgentToken:    a.deps.agentToken,
 		UserEnvs:      userEnvs,
 	}

@@ -72,7 +72,7 @@ func (a *Agent) Exec(ctx context.Context, bin string, args []string, stdin strin
 
 	cmd := exec.CommandContext(ctx, binPath, args...)
 	cmd.Dir = filepath.Join(rootDir, "workspace")
-	cmd.Env = buildCmdEnv(rt, rootDir, a.daemonSocket, a.agentToken)
+	cmd.Env = buildCmdEnv(rt, rootDir, a.daemonURL, a.agentToken)
 
 	// Setpgid puts the child in its own pgid (== child PID). Cancel
 	// path below sends SIGKILL to -pgid so children of `sh -c …` die.
