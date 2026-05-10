@@ -334,6 +334,38 @@ func (a *Agent) buildExecContainer(
 		})
 	}
 
+	// Propagate the agent's user-declared mounts (`otters run -v …`)
+	// into the per-job container — without this, BINs that need
+	// host-side credentials (kubectl + ~/.kube/config, gh + ~/.config/gh,
+	// docker + ~/.docker, etc.) fall back to their no-config defaults
+	// inside the per-job container even when the agent's main runtime
+	// container has the mount. Mirrors agent.go's selection: prefer the
+	// per-run RuntimeMounts when present, fall back to the
+	// provider-level deps.mounts for callers still on docker.WithMounts.
+	userMounts := a.deps.mounts
+	if rt.Source != nil && rt.Source.Agent != nil && len(rt.Source.Agent.RuntimeMounts) > 0 {
+		userMounts = make([]executor.Mount, 0, len(rt.Source.Agent.RuntimeMounts))
+		for _, m := range rt.Source.Agent.RuntimeMounts {
+			if m == nil {
+				continue
+			}
+			userMounts = append(userMounts, executor.Mount{
+				Host:        m.Host,
+				Target:      m.Target,
+				Description: m.Description,
+				ReadOnly:    m.ReadOnly,
+			})
+		}
+	}
+	for _, m := range userMounts {
+		mounts = append(mounts, mounttypes.Mount{
+			Type:     mounttypes.TypeBind,
+			Source:   m.Host,
+			Target:   m.Target,
+			ReadOnly: m.ReadOnly,
+		})
+	}
+
 	hostCfg := &containertypes.HostConfig{
 		Mounts:     mounts,
 		AutoRemove: false, // we remove explicitly so Inspect can read exit code
