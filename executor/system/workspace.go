@@ -455,11 +455,16 @@ func mountsContextMarkdown(mounts []executor.Mount) []byte {
 
 	b.WriteString("# Host-mounted paths\n\n")
 	b.WriteString("The following paths inside your workspace are backed by directories on the user's host machine. ")
-	b.WriteString("You can read and write through them; changes are visible to the host immediately. ")
+	b.WriteString("Changes through writable mounts are visible to the host immediately. ")
+	b.WriteString("Read-only mounts (`(ro)`) reject writes — don't try, the operation will fail. ")
 	b.WriteString("Do not assume any other top-level paths are mounted.\n\n")
 
 	for _, m := range mounts {
 		fmt.Fprintf(&b, "- `%s`", m.Target)
+
+		if m.ReadOnly {
+			b.WriteString(" *(ro)*")
+		}
 
 		if m.Description != "" {
 			fmt.Fprintf(&b, " — %s", m.Description)

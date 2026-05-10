@@ -18,6 +18,24 @@ type Agent struct {
 	Labels   map[string]string `json:"labels,omitempty"`
 	Args     map[string]string `json:"args,omitempty"`
 	Envs     []*Env            `json:"envs,omitempty"`
+	// RuntimeMounts is a runtime-only side-channel populated by
+	// spec.WithMounts. Not serialised — Agentfiles do not have a
+	// MOUNT directive; mounts live with the launch invocation
+	// (`otters run -v ...`). Both executors read this slice at
+	// Create time to attach the user's bind mounts to the agent.
+	RuntimeMounts []*Mount `json:"-"`
+}
+
+// Mount is the runtime-only spec for a host-path → in-agent binding
+// declared by `otters run -v HOST:TARGET[:DESC][:ro|:rw]`. Mirrors
+// executor.Mount one-to-one; kept in spec/ so spec.Override
+// (Agentfile mutator) can carry it without a circular import on
+// executor.
+type Mount struct {
+	Host        string
+	Target      string
+	Description string
+	ReadOnly    bool
 }
 
 type Context struct {
@@ -80,6 +98,54 @@ func WithRuntime(runtime string) Override {
 func WithModel(model string) Override {
 	return func(agentfile *Agentfile) {
 		agentfile.Agent.Model = model
+	}
+}
+
+// WithExtraEnvs appends additional ENV declarations to the parsed
+// Agentfile. Used by the daemon to surface per-run env overrides
+// (`otters run -e KEY=VAL`) through the same plumbing as the
+// Agentfile-declared envs. Validate runs after Apply so reserved
+// keys (PATH, *_API_KEY, etc.) are still rejected before the agent
+// starts; the override is additive — duplicate keys win against the
+// Agentfile-declared value.
+// WithMounts attaches user mounts to the agent. The spec doesn't
+// have a MOUNT directive (mounts live on the run invocation), but
+// the override piggybacks through Agent.RuntimeMounts so the
+// executor backends pick them up at Create time without a separate
+// call-time channel.
+func WithMounts(mounts []*Mount) Override {
+	return func(agentfile *Agentfile) {
+		if agentfile.Agent == nil {
+			return
+		}
+		agentfile.Agent.RuntimeMounts = mounts
+	}
+}
+
+func WithExtraEnvs(envs []*Env) Override {
+	return func(agentfile *Agentfile) {
+		if len(envs) == 0 {
+			return
+		}
+		// Drop any baked-in env that the override replaces, then
+		// append the override. Preserves declaration order for the
+		// kept entries.
+		incoming := make(map[string]struct{}, len(envs))
+		for _, e := range envs {
+			if e == nil {
+				continue
+			}
+			incoming[e.Key] = struct{}{}
+		}
+		merged := make([]*Env, 0, len(agentfile.Agent.Envs)+len(envs))
+		for _, e := range agentfile.Agent.Envs {
+			if _, replaced := incoming[e.Key]; replaced {
+				continue
+			}
+			merged = append(merged, e)
+		}
+		merged = append(merged, envs...)
+		agentfile.Agent.Envs = merged
 	}
 }
 

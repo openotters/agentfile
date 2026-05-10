@@ -367,13 +367,33 @@ func (a *Agent) create(ctx context.Context) error {
 		userEnvs = rt.Source.Agent.Envs
 	}
 
+	// Per-run user mounts come through spec.WithMounts populating
+	// rt.Source.Agent.RuntimeMounts; the legacy provider-level
+	// docker.WithMounts (deps.mounts) is the fallback for callers
+	// that haven't migrated yet.
+	userMounts := a.deps.mounts
+	if rt.Source != nil && rt.Source.Agent != nil && len(rt.Source.Agent.RuntimeMounts) > 0 {
+		userMounts = make([]executor.Mount, 0, len(rt.Source.Agent.RuntimeMounts))
+		for _, m := range rt.Source.Agent.RuntimeMounts {
+			if m == nil {
+				continue
+			}
+			userMounts = append(userMounts, executor.Mount{
+				Host:        m.Host,
+				Target:      m.Target,
+				Description: m.Description,
+				ReadOnly:    m.ReadOnly,
+			})
+		}
+	}
+
 	cs := containerSpec{
 		Name:          "otters-" + a.deps.id.String(),
 		BaseImage:     a.deps.baseImage,
 		AgentRoot:     a.deps.fs.Root(),
 		RuntimeImage:  a.runtimeRef(rt),
 		BINImages:     bins,
-		UserMounts:    a.deps.mounts,
+		UserMounts:    userMounts,
 		NetworkAccess: true,
 		APIBase:       rt.APIBase,
 		APIKey:        rt.APIKey,

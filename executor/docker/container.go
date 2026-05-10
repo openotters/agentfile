@@ -158,9 +158,10 @@ func (s *containerSpec) buildHostConfig() *containertypes.HostConfig {
 
 	for _, m := range s.UserMounts {
 		mounts = append(mounts, mounttypes.Mount{
-			Type:   mounttypes.TypeBind,
-			Source: m.Host,
-			Target: m.Target,
+			Type:     mounttypes.TypeBind,
+			Source:   m.Host,
+			Target:   m.Target,
+			ReadOnly: m.ReadOnly,
 		})
 	}
 
@@ -191,8 +192,11 @@ func (s *containerSpec) buildHostConfig() *containertypes.HostConfig {
 }
 
 // buildEnv produces the locked-down env (PATH points at the
-// in-container BIN dirs; HOME / XDG_* / TMPDIR live under
-// /workspace) plus per-provider credentials.
+// in-container BIN dirs; HOME / XDG_* / TMPDIR live under /agent)
+// plus per-provider credentials. AgentRoot is the FHS bind target
+// (/agent), not the scratch CWD (/workspace) — HOME has to resolve
+// to /agent/home, which is where the materialised tree's home/ dir
+// actually exists inside the container.
 func (s *containerSpec) buildEnv() []string {
 	binDirs := make([]string, 0, len(s.BINImages))
 	for name := range s.BINImages {
@@ -200,7 +204,7 @@ func (s *containerSpec) buildEnv() []string {
 	}
 
 	env := executor.BuildLockedEnv(executor.EnvOptions{
-		AgentRoot: inContainerWorkspace,
+		AgentRoot: inContainerAgentRoot,
 		BinDirs:   binDirs,
 	})
 
