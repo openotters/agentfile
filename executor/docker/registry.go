@@ -151,11 +151,25 @@ func (r *registry) Resolve(ctx context.Context, ref string) (ocispec.Descriptor,
 // longer needs to surface artifactType.
 func (r *registry) Inspect(ctx context.Context, ref string) (executor.ImageInfo, error) {
 	res, err := r.client.ImageInspect(ctx, ref)
-	if err != nil {
-		if isNotFoundErr(err) {
+	if err != nil && isNotFoundErr(err) {
+		// Docker's /images/{ref}/json endpoint 404s on OCI artifacts
+		// whose config blob has a custom mediatype (and on some
+		// unqualified refs like `otter:latest`), even when the tag
+		// is registered and visible to ImageList. Fall back to
+		// resolving ref → ID via list-with-filter, then inspect
+		// by ID.
+		id, resolveErr := resolveImageID(ctx, r.client, ref)
+		if resolveErr != nil {
+			return executor.ImageInfo{}, fmt.Errorf("docker: resolve %s: %w", ref, resolveErr)
+		}
+		if id == "" {
 			return executor.ImageInfo{}, fmt.Errorf("%w: %s", executor.ErrRefNotFound, ref)
 		}
 
+		res, err = r.client.ImageInspect(ctx, id)
+	}
+
+	if err != nil {
 		return executor.ImageInfo{}, fmt.Errorf("docker: ImageInspect %s: %w", ref, err)
 	}
 
@@ -401,6 +415,7 @@ func isNotFoundErr(err error) bool {
 	msg := strings.ToLower(err.Error())
 	switch {
 	case strings.Contains(msg, "no such image"),
+		strings.Contains(msg, "no such container"),
 		strings.Contains(msg, "not found"):
 		return true
 	}

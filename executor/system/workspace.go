@@ -313,12 +313,17 @@ func workspacePaths(view executor.WorkspaceView) workspacePathSet {
 		runtime = filepath.Join(root, "usr", "local", "bin", "runtime")
 	}
 
+	workspace := view.WorkspaceDir
+	if workspace == "" {
+		workspace = filepath.Join(root, "workspace")
+	}
+
 	return workspacePathSet{
 		context:   context,
 		data:      filepath.Join(root, "etc", "data"),
 		bins:      bins,
 		runtime:   runtime,
-		workspace: filepath.Join(root, "workspace"),
+		workspace: workspace,
 		home:      filepath.Join(root, "home"),
 		tmp:       filepath.Join(root, "tmp"),
 		varlib:    filepath.Join(root, "var", "lib"),

@@ -87,6 +87,56 @@ func (a *Agent) PromptStream(ctx context.Context, req executor.PromptRequest, cb
 	}
 }
 
+// ListSessionMessages fetches the persisted message log for sessionID
+// from the runtime's gRPC server. Satisfies executor.SessionReader.
+func (a *Agent) ListSessionMessages(
+	ctx context.Context, sessionID string, limit int,
+) ([]executor.SessionMessage, error) {
+	addr := a.Addr()
+	if addr == "" {
+		return nil, errors.New("docker agent has no runtime address (Run not called?)")
+	}
+
+	conn, err := a.dial(ctx, addr)
+	if err != nil {
+		return nil, err
+	}
+
+	return executor.FetchSessionMessages(ctx, conn, sessionID, limit)
+}
+
+// ListSessions enumerates every session in the runtime's memory store.
+// Satisfies executor.SessionLister.
+func (a *Agent) ListSessions(ctx context.Context) ([]executor.SessionInfo, error) {
+	addr := a.Addr()
+	if addr == "" {
+		return nil, errors.New("docker agent has no runtime address (Run not called?)")
+	}
+
+	conn, err := a.dial(ctx, addr)
+	if err != nil {
+		return nil, err
+	}
+
+	return executor.FetchSessions(ctx, conn)
+}
+
+// DeleteSession drops sessionID from the runtime's session store.
+// Satisfies executor.SessionDeleter.
+func (a *Agent) DeleteSession(ctx context.Context, sessionID string) error {
+	addr := a.Addr()
+	if addr == "" {
+		return errors.New("docker agent has no runtime address (Run not called?)")
+	}
+
+	conn, err := a.dial(ctx, addr)
+	if err != nil {
+		return err
+	}
+
+	return executor.DeleteSessionRPC(ctx, conn, sessionID)
+}
+
 // PromptObject runs a stateless structured-output query against the
 // runtime's gRPC server. The runtime handles JSON-schema parsing
 // and object marshalling; we just relay.

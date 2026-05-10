@@ -35,9 +35,9 @@ func TestContainerSpec_BuildConfig(t *testing.T) {
 	if cfg.User != "65532:65532" {
 		t.Errorf("User = %q, want 65532:65532", cfg.User)
 	}
-	// Cmd should pass --root /workspace --addr 0.0.0.0:9999
+	// Cmd should pass --root /agent --addr 0.0.0.0:9999
 	joined := strings.Join(cfg.Cmd, " ")
-	if !strings.Contains(joined, "--root /workspace") || !strings.Contains(joined, "--addr 0.0.0.0:9999") {
+	if !strings.Contains(joined, "--root /agent") || !strings.Contains(joined, "--addr 0.0.0.0:9999") {
 		t.Errorf("Cmd %q missing root/addr flags", joined)
 	}
 	// Env should contain the provider-prefixed key.
@@ -135,7 +135,8 @@ func TestContainerSpec_BuildHostConfig(t *testing.T) {
 	}
 
 	wants := map[string]string{
-		"/workspace":     "bind:/host/path/agent-root",
+		"/agent":         "bind:/host/path/agent-root",
+		"/workspace":     "bind:/host/path/agent-root/workspace",
 		"/opt/runtime":   "image:ghcr.io/openotters/runtime:latest",
 		"/opt/bins/ping": "image:ghcr.io/openotters/tools/ping:latest",
 		"/data":          "bind:/host/data",

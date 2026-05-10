@@ -405,10 +405,50 @@ func TestRegistry_Inspect_NotFound(t *testing.T) {
 	cli.EXPECT().
 		ImageInspect(mock.Anything, "missing:latest").
 		Return(mobyclient.ImageInspectResult{}, errors.New("Error response from daemon: No such image: missing:latest"))
+	// Inspect falls back to ImageList for refs the docker daemon
+	// 404s on (custom-mediatype OCI artifacts, unqualified tags).
+	// An empty list confirms the ref really is missing.
+	cli.EXPECT().
+		ImageList(mock.Anything, mock.Anything).
+		Return(mobyclient.ImageListResult{}, nil)
 
 	reg := newRegistry(cli)
 	if _, err := reg.Inspect(context.Background(), "missing:latest"); !errors.Is(err, executor.ErrRefNotFound) {
 		t.Errorf("got %v, want ErrRefNotFound", err)
+	}
+}
+
+func TestRegistry_Inspect_FallsBackToListWhenInspectByRef404s(t *testing.T) {
+	t.Parallel()
+
+	const ref = "otter:latest"
+	const id = "sha256:aac94ad83250f380d395cd137862f07384d218573e1d849efd86782c925e561b"
+
+	cli := mockdocker.NewMockClient(t)
+	cli.EXPECT().
+		ImageInspect(mock.Anything, ref).
+		Return(mobyclient.ImageInspectResult{}, errors.New("Error response from daemon: No such image: otter:latest"))
+	cli.EXPECT().
+		ImageList(mock.Anything, mock.Anything).
+		Return(mobyclient.ImageListResult{
+			Items: []image.Summary{{
+				ID:       id,
+				RepoTags: []string{ref},
+			}},
+		}, nil)
+	cli.EXPECT().
+		ImageInspect(mock.Anything, id).
+		Return(mobyclient.ImageInspectResult{
+			InspectResponse: image.InspectResponse{ID: id, Size: 23200},
+		}, nil)
+
+	reg := newRegistry(cli)
+	info, err := reg.Inspect(context.Background(), ref)
+	if err != nil {
+		t.Fatalf("Inspect: %v", err)
+	}
+	if info.Digest != id {
+		t.Errorf("Digest = %q, want %q", info.Digest, id)
 	}
 }
 

@@ -3,10 +3,8 @@ package system
 import (
 	"context"
 	"errors"
-	"time"
 
 	"github.com/openotters/agentfile/executor"
-	agentv1 "github.com/openotters/agentfile/executor/api/v1"
 )
 
 // ListSessionMessages fetches the recent messages for sessionID from the
@@ -25,26 +23,35 @@ func (a *Agent) ListSessionMessages(
 		return nil, err
 	}
 
-	client := agentv1.NewAgentRuntimeClient(conn)
+	return executor.FetchSessionMessages(ctx, conn, sessionID, limit)
+}
 
-	resp, err := client.ListSessionMessages(ctx, &agentv1.ListSessionMessagesRequest{
-		SessionId: sessionID,
-		Limit:     int32(limit), //nolint:gosec // caller-bounded
-	})
+// ListSessions enumerates every session known to the runtime. Satisfies
+// executor.SessionLister.
+func (a *Agent) ListSessions(ctx context.Context) ([]executor.SessionInfo, error) {
+	if a.addr == "" {
+		return nil, errors.New("agent has no runtime address; configure WithAddr before Run")
+	}
+
+	conn, err := a.dial(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	raw := resp.GetMessages()
-	out := make([]executor.SessionMessage, len(raw))
+	return executor.FetchSessions(ctx, conn)
+}
 
-	for i, m := range raw {
-		out[i] = executor.SessionMessage{
-			Role:      m.GetRole(),
-			Content:   m.GetContent(),
-			CreatedAt: time.Unix(m.GetCreatedAt(), 0),
-		}
+// DeleteSession drops sessionID from the runtime's session store.
+// Satisfies executor.SessionDeleter.
+func (a *Agent) DeleteSession(ctx context.Context, sessionID string) error {
+	if a.addr == "" {
+		return errors.New("agent has no runtime address; configure WithAddr before Run")
 	}
 
-	return out, nil
+	conn, err := a.dial(ctx)
+	if err != nil {
+		return err
+	}
+
+	return executor.DeleteSessionRPC(ctx, conn, sessionID)
 }

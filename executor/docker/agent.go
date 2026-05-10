@@ -118,16 +118,17 @@ func (a *Agent) Prepare(ctx context.Context) error {
 				return inContainerBinsRoot + "/" + name + "/" + name
 			},
 			// WORKSPACE.md is rendered from the agent's container
-			// view: Root = /workspace (the bind target), runtime
-			// at /opt/runtime/runtime, and one BinDir per declared
-			// BIN at /opt/bins/<name>. Isolated=true flips the
-			// phrasing from "no chroot, real host paths" to "you
-			// run in a container; everything below is the
-			// in-container path".
+			// view: Root = /agent (FHS bind target), WorkspaceDir
+			// = /workspace (the scratch bind), runtime at
+			// /opt/runtime/runtime, one BinDir per declared BIN at
+			// /opt/bins/<name>. Decoupling Root from WorkspaceDir
+			// is what gives the agent a clean top-level CWD
+			// instead of the doubled-up /workspace/workspace.
 			View: executor.WorkspaceView{
-				Root:       inContainerWorkspace,
-				RuntimeBin: inContainerRuntimeDir + "/runtime",
-				Isolated:   true,
+				Root:         inContainerAgentRoot,
+				WorkspaceDir: inContainerWorkspace,
+				RuntimeBin:   inContainerRuntimeDir + "/runtime",
+				Isolated:     true,
 			},
 			ViewBinDirsForTools: func(names []string) []string {
 				dirs := make([]string, 0, len(names))

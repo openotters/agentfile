@@ -22,10 +22,18 @@ package executor
 // Isolated = false.
 type WorkspaceView struct {
 	// Root is what the agent considers the root of its tree —
-	// the directory under which `etc/`, `home/`, `tmp/`, `var/`,
-	// `workspace/` live. OTTERS_AGENT_ROOT in the spawned env
-	// points here.
+	// the directory under which `etc/`, `home/`, `tmp/`, `var/`
+	// live (and `workspace/` when WorkspaceDir is empty).
+	// OTTERS_AGENT_ROOT in the spawned env points here.
 	Root string
+
+	// WorkspaceDir is the agent-visible path to the scratch dir.
+	// When empty, falls back to `<Root>/workspace`. Docker
+	// overrides this to `/workspace` so the user-facing CWD is
+	// not `/agent/workspace` but a clean top-level path; the
+	// host directory is bind-mounted there in addition to the
+	// FHS root.
+	WorkspaceDir string
 
 	// BinDirs are the absolute paths the runtime resolves BIN
 	// tools against, in the agent's view. System: a single

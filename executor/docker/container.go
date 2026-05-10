@@ -3,6 +3,7 @@ package docker
 import (
 	"fmt"
 	"net/netip"
+	"path/filepath"
 	"strings"
 
 	containertypes "github.com/moby/moby/api/types/container"
@@ -16,11 +17,18 @@ import (
 // containerLayout describes the in-container paths the agent sees.
 // Matches the system executor's FHS-shaped agent root, except
 // runtime + each BIN come from image mounts at /opt/* instead of
-// being copied into /workspace/usr/bin.
+// being copied into /agent/usr/bin.
 const (
-	// inContainerWorkspace is where the agent's bind-mounted host
-	// state appears. Same shape as the system executor's agent
-	// root (etc/, home/, var/lib/, workspace/, …).
+	// inContainerAgentRoot hosts the agent's FHS-shaped tree
+	// (etc/, home/, var/lib/, …). The host materialised root is
+	// bind-mounted here. Hidden under /agent/ so the user-facing
+	// CWD doesn't have a "workspace/workspace" elbow.
+	inContainerAgentRoot = "/agent"
+
+	// inContainerWorkspace is the agent's scratch dir — its CWD,
+	// where files the agent creates land. The host's
+	// `<agent-root>/workspace/` is *also* bind-mounted here so
+	// writes show up at one stable, top-level path.
 	inContainerWorkspace = "/workspace"
 
 	// inContainerRuntimeDir hosts the runtime image-mount.
@@ -54,7 +62,7 @@ type containerSpec struct {
 	Name      string
 	BaseImage string
 
-	AgentRoot     string // host path, bind-mounted at /workspace
+	AgentRoot     string // host path, bind-mounted at /agent (FHS root)
 	RuntimeImage  string
 	BINImages     map[string]string // name → ref
 	UserMounts    []executor.Mount
@@ -76,12 +84,12 @@ type containerSpec struct {
 
 // buildConfig assembles the moby Container.Config for the agent's
 // runtime container. The container's entrypoint is the runtime
-// binary at the image-mount path; argv is `serve --root /workspace
+// binary at the image-mount path; argv is `serve --root /agent
 // --model <model> --addr 0.0.0.0:9999`.
 func (s *containerSpec) buildConfig() *containertypes.Config {
 	args := []string{
 		"serve",
-		"--root", inContainerWorkspace,
+		"--root", inContainerAgentRoot,
 		"--model", s.Model,
 		"--addr", "0.0.0.0:" + agentGRPCPort,
 	}
@@ -93,6 +101,11 @@ func (s *containerSpec) buildConfig() *containertypes.Config {
 		Entrypoint: []string{inContainerRuntimeDir + "/runtime"},
 		Cmd:        args,
 		Env:        s.buildEnv(),
+		// Spawn the runtime in /workspace — the bind-mounted scratch
+		// dir — so tool subprocesses inherit that CWD. Matches what
+		// WORKSPACE.md tells the model; the FHS tree lives under
+		// /agent/ but the user-facing CWD stays a clean top-level
+		// /workspace.
 		WorkingDir: inContainerWorkspace,
 		User:       "65532:65532", // distroless nonroot
 		ExposedPorts: networktypes.PortSet{
@@ -109,9 +122,21 @@ func (s *containerSpec) buildConfig() *containertypes.Config {
 // port, configure network access.
 func (s *containerSpec) buildHostConfig() *containertypes.HostConfig {
 	mounts := []mounttypes.Mount{
+		// FHS tree (etc/, usr/, home/, tmp/, var/, workspace/)
+		// hidden at /agent. The runtime reads its config from
+		// here via --root /agent.
 		{
 			Type:   mounttypes.TypeBind,
 			Source: s.AgentRoot,
+			Target: inContainerAgentRoot,
+		},
+		// Scratch dir bind-mounted at /workspace — the agent's
+		// CWD. Same host data as /agent/workspace; surfacing it at
+		// a clean top-level path is purely for the model's mental
+		// model.
+		{
+			Type:   mounttypes.TypeBind,
+			Source: filepath.Join(s.AgentRoot, "workspace"),
 			Target: inContainerWorkspace,
 		},
 		{
