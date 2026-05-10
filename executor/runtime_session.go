@@ -32,9 +32,11 @@ func FetchSessionMessages(
 
 	for i, m := range raw {
 		out[i] = SessionMessage{
-			Role:      m.GetRole(),
-			Content:   m.GetContent(),
-			CreatedAt: time.Unix(m.GetCreatedAt(), 0),
+			Role:         m.GetRole(),
+			Content:      m.GetContent(),
+			BranchesJSON: m.GetBranchesJson(),
+			ActiveBranch: int(m.GetActiveBranch()),
+			CreatedAt:    time.Unix(m.GetCreatedAt(), 0),
 		}
 	}
 

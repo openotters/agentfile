@@ -7,10 +7,20 @@ import (
 
 // SessionMessage is one stored turn from an agent's memory store.
 // Role is conventionally "user" or "assistant".
+//
+// Content shape:
+//   - user: prompt text verbatim.
+//   - assistant: JSON-encoded array of "parts" (text chunks +
+//     tool blocks). BranchesJSON, when non-empty, is a JSON array
+//     of alternative parts arrays from regeneration; ActiveBranch
+//     indexes which alternative this row's Content represents
+//     within the [Content] ++ [BranchesJSON] union.
 type SessionMessage struct {
-	Role      string
-	Content   string
-	CreatedAt time.Time
+	Role         string
+	Content      string
+	BranchesJSON string
+	ActiveBranch int
+	CreatedAt    time.Time
 }
 
 // SessionReader retrieves historical messages for a session from the

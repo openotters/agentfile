@@ -61,8 +61,9 @@ func (a *Agent) PromptStream(ctx context.Context, req executor.PromptRequest, cb
 	client := agentv1.NewAgentRuntimeClient(conn)
 
 	stream, err := client.ChatStream(ctx, &agentv1.ChatStreamRequest{
-		SessionId: req.SessionID,
-		Prompt:    req.Prompt,
+		SessionId:  req.SessionID,
+		Prompt:     req.Prompt,
+		Regenerate: req.Regenerate,
 	})
 	if err != nil {
 		return fmt.Errorf("opening chat stream: %w", err)

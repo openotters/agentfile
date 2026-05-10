@@ -10,6 +10,10 @@ import (
 type PromptRequest struct {
 	SessionID string
 	Prompt    string
+	// Regenerate signals the runtime to attach the produced parts
+	// as a new branch onto the most recent assistant turn for
+	// SessionID instead of inserting a fresh row.
+	Regenerate bool
 }
 
 // PromptEvent is a typed chat event yielded by StreamPrompter. Mirrors the

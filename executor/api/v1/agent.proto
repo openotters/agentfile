@@ -39,7 +39,12 @@ message ChatResponse {
 
 message ChatStreamRequest {
   string session_id = 1;
-  string prompt = 2;
+  string prompt     = 2;
+  // When true, the runtime appends the produced parts as a new
+  // branch onto the most recent assistant turn for session_id
+  // instead of inserting a fresh row. Falls back to insert when
+  // no prior assistant turn exists.
+  bool   regenerate = 3;
 }
 
 message ChatStreamEvent {
@@ -98,9 +103,11 @@ message ListSessionMessagesRequest {
 }
 
 message SessionMessage {
-  string role       = 1; // "user" | "assistant"
-  string content    = 2;
-  int64  created_at = 3; // unix seconds
+  string role          = 1; // "user" | "assistant"
+  string content       = 2; // user: prompt text. assistant: JSON parts array.
+  int64  created_at    = 3; // unix seconds
+  string branches_json = 4; // assistant only: JSON array of alternative parts arrays
+  int32  active_branch = 5; // assistant only: index of currently-active branch
 }
 
 message ListSessionMessagesResponse {

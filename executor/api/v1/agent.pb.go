@@ -118,9 +118,14 @@ func (x *ChatResponse) GetResponse() string {
 }
 
 type ChatStreamRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Prompt        string                 `protobuf:"bytes,2,opt,name=prompt,proto3" json:"prompt,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SessionId string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Prompt    string                 `protobuf:"bytes,2,opt,name=prompt,proto3" json:"prompt,omitempty"`
+	// When true, the runtime appends the produced parts as a new
+	// branch onto the most recent assistant turn for session_id
+	// instead of inserting a fresh row. Falls back to insert when
+	// no prior assistant turn exists.
+	Regenerate    bool `protobuf:"varint,3,opt,name=regenerate,proto3" json:"regenerate,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -167,6 +172,13 @@ func (x *ChatStreamRequest) GetPrompt() string {
 		return x.Prompt
 	}
 	return ""
+}
+
+func (x *ChatStreamRequest) GetRegenerate() bool {
+	if x != nil {
+		return x.Regenerate
+	}
+	return false
 }
 
 type ChatStreamEvent struct {
@@ -640,9 +652,11 @@ func (x *ListSessionMessagesRequest) GetLimit() int32 {
 
 type SessionMessage struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Role          string                 `protobuf:"bytes,1,opt,name=role,proto3" json:"role,omitempty"` // "user" | "assistant"
-	Content       string                 `protobuf:"bytes,2,opt,name=content,proto3" json:"content,omitempty"`
-	CreatedAt     int64                  `protobuf:"varint,3,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"` // unix seconds
+	Role          string                 `protobuf:"bytes,1,opt,name=role,proto3" json:"role,omitempty"`                                      // "user" | "assistant"
+	Content       string                 `protobuf:"bytes,2,opt,name=content,proto3" json:"content,omitempty"`                                // user: prompt text. assistant: JSON parts array.
+	CreatedAt     int64                  `protobuf:"varint,3,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`          // unix seconds
+	BranchesJson  string                 `protobuf:"bytes,4,opt,name=branches_json,json=branchesJson,proto3" json:"branches_json,omitempty"`  // assistant only: JSON array of alternative parts arrays
+	ActiveBranch  int32                  `protobuf:"varint,5,opt,name=active_branch,json=activeBranch,proto3" json:"active_branch,omitempty"` // assistant only: index of currently-active branch
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -694,6 +708,20 @@ func (x *SessionMessage) GetContent() string {
 func (x *SessionMessage) GetCreatedAt() int64 {
 	if x != nil {
 		return x.CreatedAt
+	}
+	return 0
+}
+
+func (x *SessionMessage) GetBranchesJson() string {
+	if x != nil {
+		return x.BranchesJson
+	}
+	return ""
+}
+
+func (x *SessionMessage) GetActiveBranch() int32 {
+	if x != nil {
+		return x.ActiveBranch
 	}
 	return 0
 }
@@ -928,11 +956,14 @@ const file_executor_api_v1_agent_proto_rawDesc = "" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x16\n" +
 	"\x06prompt\x18\x02 \x01(\tR\x06prompt\"*\n" +
 	"\fChatResponse\x12\x1a\n" +
-	"\bresponse\x18\x01 \x01(\tR\bresponse\"J\n" +
+	"\bresponse\x18\x01 \x01(\tR\bresponse\"j\n" +
 	"\x11ChatStreamRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x16\n" +
-	"\x06prompt\x18\x02 \x01(\tR\x06prompt\"g\n" +
+	"\x06prompt\x18\x02 \x01(\tR\x06prompt\x12\x1e\n" +
+	"\n" +
+	"regenerate\x18\x03 \x01(\bR\n" +
+	"regenerate\"g\n" +
 	"\x0fChatStreamEvent\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12\x12\n" +
 	"\x04step\x18\x02 \x01(\x05R\x04step\x12\x12\n" +
@@ -965,12 +996,14 @@ const file_executor_api_v1_agent_proto_rawDesc = "" +
 	"\x1aListSessionMessagesRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x14\n" +
-	"\x05limit\x18\x02 \x01(\x05R\x05limit\"]\n" +
+	"\x05limit\x18\x02 \x01(\x05R\x05limit\"\xa7\x01\n" +
 	"\x0eSessionMessage\x12\x12\n" +
 	"\x04role\x18\x01 \x01(\tR\x04role\x12\x18\n" +
 	"\acontent\x18\x02 \x01(\tR\acontent\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\x03 \x01(\x03R\tcreatedAt\"^\n" +
+	"created_at\x18\x03 \x01(\x03R\tcreatedAt\x12#\n" +
+	"\rbranches_json\x18\x04 \x01(\tR\fbranchesJson\x12#\n" +
+	"\ractive_branch\x18\x05 \x01(\x05R\factiveBranch\"^\n" +
 	"\x1bListSessionMessagesResponse\x12?\n" +
 	"\bmessages\x18\x01 \x03(\v2#.openotters.agent.v1.SessionMessageR\bmessages\"\x0f\n" +
 	"\rHealthRequest\"]\n" +
