@@ -323,10 +323,14 @@ func (a *Agent) buildExecContainer(
 		binDirs = append(binDirs, inContainerBinsRoot+"/"+name)
 	}
 
+	// Rewrite the daemon URL to the in-container form when bind-
+	// mounting the socket (same shape as containerSpec.buildEnv).
+	daemonURL, _, _ := daemonAccess(a.deps.daemonURL)
+
 	env := executor.BuildLockedEnv(executor.EnvOptions{
 		AgentRoot:  inContainerAgentRoot,
 		BinDirs:    binDirs,
-		DaemonURL:  a.deps.daemonURL,
+		DaemonURL:  daemonURL,
 		AgentToken: a.deps.agentToken,
 	})
 
@@ -439,12 +443,13 @@ func (a *Agent) buildExecContainer(
 		AutoRemove: false, // we remove explicitly so Inspect can read exit code
 	}
 
-	// Mirror containerSpec — Linux Docker needs host.docker.internal
-	// → host-gateway so chained async jobs can reach the daemon by
-	// the same hostname agents use. Harmless on macOS Docker Desktop
-	// (already provides the mapping).
-	if a.deps.daemonURL != "" && strings.Contains(a.deps.daemonURL, "host.docker.internal") {
-		hostCfg.ExtraHosts = append(hostCfg.ExtraHosts, "host.docker.internal:host-gateway")
+	// Mirror containerSpec's daemon-access wiring: bind-mount the
+	// socket for the unix scheme, add host.docker.internal mapping
+	// for TCP on plain Linux Docker.
+	if _, mount, extraHost := daemonAccess(a.deps.daemonURL); mount != nil {
+		hostCfg.Mounts = append(hostCfg.Mounts, *mount)
+	} else if extraHost != "" {
+		hostCfg.ExtraHosts = append(hostCfg.ExtraHosts, extraHost)
 	}
 
 	return cfg, hostCfg, nil

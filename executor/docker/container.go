@@ -40,6 +40,12 @@ const (
 	// image lays down (typically `/`-rooted).
 	inContainerBinsRoot = "/opt/bins"
 
+	// inContainerDaemonSocket is the canonical in-container path
+	// where we bind-mount the daemon's unix socket (Linux mode).
+	// Regardless of where the host socket lives, the agent inside
+	// always dials this same path, so OTTERSD_URL is stable.
+	inContainerDaemonSocket = "/run/ottersd.sock"
+
 	// agentGRPCPort is the in-container port the runtime serves
 	// gRPC on. Published to the host on a random loopback port.
 	agentGRPCPort = "9999"
@@ -75,11 +81,23 @@ type containerSpec struct {
 
 	HostGRPCPort string // loopback port on host that maps to agentGRPCPort
 
-	// DaemonURL is the TCP endpoint the runtime dials back to.
-	// Always TCP for docker (unix-socket bind-mounts of host sockets
-	// don't work on Docker Desktop / Colima — macOS limitation).
+	// DaemonURL is how the runtime reaches the host's daemon. Two
+	// supported shapes:
+	//
+	//   unix:///<host-path>      bind-mount the daemon's unix socket
+	//                            into the container at a canonical
+	//                            in-container path; rewrite the URL
+	//                            the agent dials accordingly. Clean
+	//                            on native Linux Docker.
+	//   http://<host>:<port>     dial the daemon's TCP listener over
+	//                            host.docker.internal. Used on
+	//                            Docker Desktop / Colima where unix-
+	//                            socket bind-mount fails through
+	//                            virtiofs.
+	//
 	// AgentToken is the JWT presented as Authorization: Bearer …
-	// Empty = no OTTERSD_URL / OTTERS_AGENT_TOKEN env injection.
+	// Empty DaemonURL = no OTTERSD_URL / OTTERS_AGENT_TOKEN env
+	// injection.
 	DaemonURL  string
 	AgentToken string
 
@@ -198,16 +216,59 @@ func (s *containerSpec) buildHostConfig() *containertypes.HostConfig {
 		NetworkMode:  networkMode,
 	}
 
-	// Linux Docker doesn't auto-resolve host.docker.internal — Docker
-	// Desktop on macOS / Windows DOES. Add the ExtraHost mapping so
-	// the same OTTERSD_URL value works on both. The mapping is
-	// harmless when not needed (Docker Desktop already provides it,
-	// our entry just shadows with the same value).
-	if s.DaemonURL != "" && strings.Contains(s.DaemonURL, "host.docker.internal") {
-		hostCfg.ExtraHosts = append(hostCfg.ExtraHosts, "host.docker.internal:host-gateway")
+	// Wire daemon access. Two mutually exclusive shapes:
+	//   - unix socket: bind-mount the host socket into the container.
+	//   - TCP via host.docker.internal: add the ExtraHosts mapping on
+	//     plain Linux Docker (Mac / Colima already provide the name).
+	if _, mount, extraHost := daemonAccess(s.DaemonURL); mount != nil {
+		hostCfg.Mounts = append(hostCfg.Mounts, *mount)
+	} else if extraHost != "" {
+		hostCfg.ExtraHosts = append(hostCfg.ExtraHosts, extraHost)
 	}
 
 	return hostCfg
+}
+
+// daemonAccess decides how the agent inside the container reaches
+// the openotters daemon, given the host-side DaemonURL. Returns:
+//
+//   - containerURL: the URL the runtime should dial from inside the
+//     container (may differ from the input when the input is a unix
+//     socket — we always expose the socket at the canonical
+//     inContainerDaemonSocket path).
+//   - mount: a bind-mount to add to HostConfig.Mounts when the
+//     socket scheme is in use; nil otherwise.
+//   - extraHost: a `host.docker.internal:host-gateway` entry to add
+//     to HostConfig.ExtraHosts when the TCP scheme is in use on
+//     plain Linux Docker; empty otherwise.
+//
+// Empty DaemonURL returns zero values across the board — that's the
+// "agent has no daemon callback" case and the caller skips both
+// wiring legs.
+func daemonAccess(daemonURL string) (string, *mounttypes.Mount, string) {
+	if daemonURL == "" {
+		return "", nil, ""
+	}
+
+	const unixScheme = "unix://"
+
+	if strings.HasPrefix(daemonURL, unixScheme) {
+		hostPath := strings.TrimPrefix(daemonURL, unixScheme)
+
+		return unixScheme + inContainerDaemonSocket,
+			&mounttypes.Mount{
+				Type:   mounttypes.TypeBind,
+				Source: hostPath,
+				Target: inContainerDaemonSocket,
+			},
+			""
+	}
+
+	if strings.Contains(daemonURL, "host.docker.internal") {
+		return daemonURL, nil, "host.docker.internal:host-gateway"
+	}
+
+	return daemonURL, nil, ""
 }
 
 // buildEnv produces the locked-down env (PATH points at the
@@ -222,10 +283,16 @@ func (s *containerSpec) buildEnv() []string {
 		binDirs = append(binDirs, inContainerBinsRoot+"/"+name)
 	}
 
+	// Rewrite the daemon URL to the in-container form when we're
+	// bind-mounting the socket: the agent always dials
+	// inContainerDaemonSocket; the host-side path lives only on the
+	// bind-mount entry, not in the env.
+	daemonURL, _, _ := daemonAccess(s.DaemonURL)
+
 	env := executor.BuildLockedEnv(executor.EnvOptions{
 		AgentRoot:  inContainerAgentRoot,
 		BinDirs:    binDirs,
-		DaemonURL:  s.DaemonURL,
+		DaemonURL:  daemonURL,
 		AgentToken: s.AgentToken,
 	})
 
