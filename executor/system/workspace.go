@@ -68,6 +68,7 @@ type workspace struct {
 	ref            spec.Reference
 	overrides      []spec.Override
 	ociPuller      agentoci.Puller
+	usageFetcher   agentoci.UsageFetcher
 	modelResolver  model.Resolver
 	digestResolver DigestResolver
 	imageRef       string
@@ -184,12 +185,22 @@ func (w *workspace) materializeContent(
 			}
 		}
 
+		// Docs.Usage is stamped optimistically with the conventional
+		// path inside the agent tree. The actual file is written by
+		// installToolDocs (system path) / InstallToolDocs (docker
+		// path); if the BIN image carries no USAGE.md the file never
+		// lands and the runtime's loader silently skips the entry.
+		// Both backends read the bind-mounted relative path the same
+		// way, so no docker-specific override is needed.
 		rt.Tools = append(rt.Tools, executor.ResolvedTool{
 			Name:        t.Name,
 			Description: t.Description,
 			Binary:      binary,
 			Ref:         t.Image,
 			Digest:      w.resolveDigest(t.Image),
+			Docs: executor.ToolDocs{
+				Usage: filepath.Join(dataDir, "bins", t.Name, "USAGE.md"),
+			},
 		})
 	}
 
@@ -222,6 +233,10 @@ func (w *workspace) materializeContent(
 	}
 
 	if e := w.applyMounts(fs); e != nil {
+		return nil, nil, e
+	}
+
+	if e := w.installToolDocs(ctx, fs, af); e != nil {
 		return nil, nil, e
 	}
 
@@ -539,6 +554,41 @@ func (w *workspace) installTools(ctx context.Context, fs billy.Filesystem, af *s
 		dest := filepath.Join(binDir, t.Name)
 		if err := pullBin(ctx, w.ociPuller, fs, spec.ParseReference(t.Image), dest); err != nil {
 			return fmt.Errorf("pulling tool %s: %w", t.Name, err)
+		}
+	}
+
+	return nil
+}
+
+// installToolDocs fetches the USAGE.md body declared by each BIN
+// manifest and writes it into etc/data/bins/<name>/USAGE.md so the
+// runtime's tool loader can append it to the model-facing tool
+// description. A nil usageFetcher (test / offline mode) or a BIN
+// without the annotation both result in no file written — the
+// runtime degrades gracefully because materializeContent stamped
+// the path optimistically and the loader treats missing files as
+// "no doc". Errors fetching one BIN's doc don't fail the
+// materialisation pipeline; we record nothing and move on.
+func (w *workspace) installToolDocs(
+	ctx context.Context, fs billy.Filesystem, af *spec.Agentfile,
+) error {
+	if w.usageFetcher == nil {
+		return nil
+	}
+
+	for _, t := range af.Agent.Bins {
+		body, err := w.usageFetcher(ctx, spec.ParseReference(t.Image))
+		if err != nil || body == "" {
+			continue
+		}
+
+		dst := filepath.Join(dataDir, "bins", t.Name, "USAGE.md")
+		if mkErr := fs.MkdirAll(filepath.Dir(dst), 0o755); mkErr != nil {
+			return fmt.Errorf("creating usage dir for %s: %w", t.Name, mkErr)
+		}
+
+		if writeErr := util.WriteFile(fs, dst, []byte(body), 0o644); writeErr != nil {
+			return fmt.Errorf("writing usage for %s: %w", t.Name, writeErr)
 		}
 	}
 

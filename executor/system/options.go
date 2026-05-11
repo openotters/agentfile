@@ -20,6 +20,15 @@ func WithPuller(p agentoci.Puller) ProviderOption {
 	return func(a *Provider) { a.ociPuller = p }
 }
 
+// WithUsageFetcher sets the OCI fetcher used to read each BIN's
+// USAGE.md body at materialisation time. Nil disables doc
+// extraction — materializeContent still stamps the conventional
+// path on each ResolvedTool so the runtime stays consistent, but
+// no file is written and the loader silently skips the doc.
+func WithUsageFetcher(f agentoci.UsageFetcher) ProviderOption {
+	return func(a *Provider) { a.usageFetcher = f }
+}
+
 // WithLocalRuntime overrides the runtime binary with a local path (skips OCI pull).
 func WithLocalRuntime(path string) ProviderOption {
 	return func(a *Provider) { a.localRuntime = path }
@@ -110,6 +119,14 @@ func WithOverrides(overrides ...spec.Override) AgentOption {
 // WithAgentPuller sets the OCI puller on the agent.
 func WithAgentPuller(p agentoci.Puller) AgentOption {
 	return func(a *Agent) { a.ws.ociPuller = p }
+}
+
+// WithAgentUsageFetcher sets the OCI usage fetcher on the agent.
+// Symmetric with WithAgentPuller: scoped to a single Agent created
+// directly (rather than via Provider, which propagates the
+// Provider-level WithUsageFetcher).
+func WithAgentUsageFetcher(f agentoci.UsageFetcher) AgentOption {
+	return func(a *Agent) { a.ws.usageFetcher = f }
 }
 
 // WithAgentLocalRuntime sets a local runtime binary path on the agent.

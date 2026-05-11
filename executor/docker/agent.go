@@ -35,6 +35,7 @@ type agentDeps struct {
 	hostFS       billy.Filesystem // non-chrooted host FS
 	store        oras.ReadOnlyTarget
 	puller       agentoci.Puller
+	usageFetcher agentoci.UsageFetcher
 	modelResolve model.Resolver
 	mounts       []executor.Mount
 	hostGRPCPort string
@@ -113,6 +114,7 @@ func (a *Agent) Prepare(ctx context.Context) error {
 			Ref:           a.deps.ref,
 			Overrides:     a.deps.overrides,
 			OCIPuller:     a.deps.puller,
+			UsageFetcher:  a.deps.usageFetcher,
 			ModelResolver: a.deps.modelResolve,
 			ImageRef:      a.deps.ref.String(),
 			Mounts:        a.deps.mounts,

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -83,8 +84,23 @@ func (a *Agent) Exec(ctx context.Context, bin string, args []string, stdin strin
 	}
 
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+
+	// Forward live bytes to the optional stream sinks (set by the
+	// async-jobs pool so partial output lands in SQLite mid-flight).
+	// Local buffers stay the source of truth for the final
+	// ExecResult; the sinks are an additional, lossy channel.
+	streamSinks := executor.ExecStreamSinksFrom(ctx)
+	if streamSinks.Stdout != nil {
+		cmd.Stdout = io.MultiWriter(&stdout, streamSinks.Stdout)
+	} else {
+		cmd.Stdout = &stdout
+	}
+
+	if streamSinks.Stderr != nil {
+		cmd.Stderr = io.MultiWriter(&stderr, streamSinks.Stderr)
+	} else {
+		cmd.Stderr = &stderr
+	}
 
 	if err := cmd.Start(); err != nil {
 		return executor.ExecResult{

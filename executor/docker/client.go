@@ -61,6 +61,13 @@ type Client interface {
 	ContainerList(
 		ctx context.Context, opts mobyclient.ContainerListOptions,
 	) (mobyclient.ContainerListResult, error)
+	// ContainerAttach returns a hijacked connection wired up to the
+	// container's stdio. The async-exec path uses it to write a
+	// stdin payload before ContainerStart, then half-closes the
+	// write side so the BIN reads EOF and continues.
+	ContainerAttach(
+		ctx context.Context, id string, opts mobyclient.ContainerAttachOptions,
+	) (mobyclient.ContainerAttachResult, error)
 
 	ImagePull(
 		ctx context.Context, ref string, opts mobyclient.ImagePullOptions,

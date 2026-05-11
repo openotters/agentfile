@@ -31,6 +31,7 @@ type Provider struct {
 	hostFS        billy.Filesystem
 	storeFor      StoreFor
 	ociPuller     agentoci.Puller
+	usageFetcher  agentoci.UsageFetcher
 	localRuntime  string
 	logDir        string
 	loopback      LoopbackAllocator
@@ -50,11 +51,12 @@ type Provider struct {
 // Create to produce the oras.ReadOnlyTarget backing that agent's image.
 func NewProvider(root billy.Filesystem, storeFor StoreFor, opts ...ProviderOption) *Provider {
 	a := &Provider{
-		fs:        root,
-		hostFS:    osfs.New("/"),
-		storeFor:  storeFor,
-		ociPuller: agentoci.RemotePuller(),
-		loopback:  defaultLoopbackAllocator{},
+		fs:           root,
+		hostFS:       osfs.New("/"),
+		storeFor:     storeFor,
+		ociPuller:    agentoci.RemotePuller(),
+		usageFetcher: agentoci.RemoteUsageFetcher(),
+		loopback:     defaultLoopbackAllocator{},
 	}
 
 	for _, opt := range opts {
@@ -69,6 +71,7 @@ func (a *Provider) agentOpts(ref spec.Reference, overrides []spec.Override) []Ag
 		WithStore(a.storeFor(ref)),
 		WithReference(ref),
 		WithAgentPuller(a.ociPuller),
+		WithAgentUsageFetcher(a.usageFetcher),
 		withAgentHostFS(a.hostFS),
 	}
 

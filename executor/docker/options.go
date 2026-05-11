@@ -3,6 +3,7 @@ package docker
 import (
 	"github.com/openotters/agentfile/executor"
 	"github.com/openotters/agentfile/model"
+	agentoci "github.com/openotters/agentfile/oci"
 )
 
 // ProviderOption configures the Docker Provider.
@@ -50,6 +51,17 @@ func WithLogDir(dir string) ProviderOption {
 // Provider creates. Same semantics as the system executor.
 func WithMounts(m []executor.Mount) ProviderOption {
 	return func(p *Provider) { p.mounts = m }
+}
+
+// WithUsageFetcher overrides the OCI fetcher used to read each
+// BIN's USAGE.md body at materialisation time. Default is
+// agentoci.RemoteUsageFetcher() (talks directly to the upstream
+// registry); the openotters daemon swaps in a caching variant that
+// reads through the embedded registry. Nil disables doc extraction
+// — the runtime still sees the stamped Docs.Usage path but reads
+// no body.
+func WithUsageFetcher(f agentoci.UsageFetcher) ProviderOption {
+	return func(p *Provider) { p.usageFetcher = f }
 }
 
 // AgentOption configures one Agent at Create time. Mirrors the

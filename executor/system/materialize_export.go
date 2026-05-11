@@ -22,6 +22,7 @@ type MaterializeOptions struct {
 	Ref            spec.Reference
 	Overrides      []spec.Override
 	OCIPuller      agentoci.Puller
+	UsageFetcher   agentoci.UsageFetcher
 	ModelResolver  model.Resolver
 	DigestResolver DigestResolver
 	ImageRef       string
@@ -77,6 +78,7 @@ func MaterializeContent(
 		ref:                 opts.Ref,
 		overrides:           opts.Overrides,
 		ociPuller:           opts.OCIPuller,
+		usageFetcher:        opts.UsageFetcher,
 		modelResolver:       opts.ModelResolver,
 		digestResolver:      opts.DigestResolver,
 		imageRef:            opts.ImageRef,

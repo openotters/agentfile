@@ -56,11 +56,31 @@ type Provenance struct {
 // ResolvedTool describes a tool binary with its resolved filesystem
 // path plus, when known, its source ref and OCI digest.
 type ResolvedTool struct {
-	Name        string `yaml:"name" json:"name"`
-	Description string `yaml:"description,omitempty" json:"description,omitempty"`
-	Binary      string `yaml:"binary" json:"binary"`
-	Ref         string `yaml:"ref,omitempty" json:"ref,omitempty"`
-	Digest      string `yaml:"digest,omitempty" json:"digest,omitempty"`
+	Name        string   `yaml:"name" json:"name"`
+	Description string   `yaml:"description,omitempty" json:"description,omitempty"`
+	Binary      string   `yaml:"binary" json:"binary"`
+	Ref         string   `yaml:"ref,omitempty" json:"ref,omitempty"`
+	Digest      string   `yaml:"digest,omitempty" json:"digest,omitempty"`
+	Docs        ToolDocs `yaml:"docs,omitempty" json:"docs,omitempty"`
+}
+
+// ToolDocs are the documentation artefacts materialised alongside the
+// BIN binary. Each field is a filesystem path the runtime can read
+// when assembling the model-facing tool description: relative paths
+// resolve against the agent's chroot root, absolute paths are used
+// verbatim (the docker executor uses absolute container-rooted
+// paths). Empty means "this BIN has no doc of that kind."
+//
+// The shape is intentionally a small struct rather than a flat
+// scalar so additional artefacts (examples, schema, FAQ) can land
+// here without breaking the agent.yaml schema. Producers populate
+// each field from the corresponding `vnd.openotters.bin.*` manifest
+// annotation at materialisation time.
+type ToolDocs struct {
+	// Usage is the path to a USAGE.md-style long-form description.
+	// Sourced from the BIN image's `vnd.openotters.bin.usage`
+	// annotation. Optional — empty for BINs that ship no doc.
+	Usage string `yaml:"usage,omitempty" json:"usage,omitempty"`
 }
 
 // WriteTo serializes the runtime to the given filesystem as YAML.

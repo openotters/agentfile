@@ -41,6 +41,7 @@ type Provider struct {
 	hostFS        billy.Filesystem
 	storeFor      StoreFor
 	ociPuller     agentoci.Puller
+	usageFetcher  agentoci.UsageFetcher
 	modelResolver model.Resolver
 	mounts        []executor.Mount
 	logDir        string
@@ -61,11 +62,12 @@ type Provider struct {
 // shape as the system executor's equivalents.
 func NewProvider(root billy.Filesystem, storeFor StoreFor, opts ...ProviderOption) (*Provider, error) {
 	p := &Provider{
-		baseImage: DefaultBaseImage,
-		root:      root,
-		hostFS:    osfs.New("/"),
-		storeFor:  storeFor,
-		ociPuller: agentoci.RemotePuller(),
+		baseImage:    DefaultBaseImage,
+		root:         root,
+		hostFS:       osfs.New("/"),
+		storeFor:     storeFor,
+		ociPuller:    agentoci.RemotePuller(),
+		usageFetcher: agentoci.RemoteUsageFetcher(),
 	}
 
 	for _, opt := range opts {
@@ -127,6 +129,7 @@ func (p *Provider) CreateWithOptions(
 		hostFS:       p.hostFS,
 		store:        p.storeFor(ref),
 		puller:       p.ociPuller,
+		usageFetcher: p.usageFetcher,
 		modelResolve: p.modelResolver,
 		mounts:       p.mounts,
 		hostGRPCPort: hostPort,

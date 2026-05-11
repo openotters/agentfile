@@ -505,6 +505,78 @@ func (_c *MockClient_ContainerStart_Call) RunAndReturn(run func(ctx context.Cont
 	return _c
 }
 
+// ContainerAttach provides a mock function for the type MockClient
+func (_mock *MockClient) ContainerAttach(ctx context.Context, id string, opts client.ContainerAttachOptions) (client.ContainerAttachResult, error) {
+	ret := _mock.Called(ctx, id, opts)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ContainerAttach")
+	}
+
+	var r0 client.ContainerAttachResult
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, client.ContainerAttachOptions) (client.ContainerAttachResult, error)); ok {
+		return returnFunc(ctx, id, opts)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, client.ContainerAttachOptions) client.ContainerAttachResult); ok {
+		r0 = returnFunc(ctx, id, opts)
+	} else {
+		r0 = ret.Get(0).(client.ContainerAttachResult)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, client.ContainerAttachOptions) error); ok {
+		r1 = returnFunc(ctx, id, opts)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockClient_ContainerAttach_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ContainerAttach'
+type MockClient_ContainerAttach_Call struct {
+	*mock.Call
+}
+
+// ContainerAttach is a helper method to define mock.On call
+//   - ctx context.Context
+//   - id string
+//   - opts client.ContainerAttachOptions
+func (_e *MockClient_Expecter) ContainerAttach(ctx interface{}, id interface{}, opts interface{}) *MockClient_ContainerAttach_Call {
+	return &MockClient_ContainerAttach_Call{Call: _e.mock.On("ContainerAttach", ctx, id, opts)}
+}
+
+func (_c *MockClient_ContainerAttach_Call) Run(run func(ctx context.Context, id string, opts client.ContainerAttachOptions)) *MockClient_ContainerAttach_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 client.ContainerAttachOptions
+		if args[2] != nil {
+			arg2 = args[2].(client.ContainerAttachOptions)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *MockClient_ContainerAttach_Call) Return(containerAttachResult client.ContainerAttachResult, err error) *MockClient_ContainerAttach_Call {
+	_c.Call.Return(containerAttachResult, err)
+	return _c
+}
+
+func (_c *MockClient_ContainerAttach_Call) RunAndReturn(run func(ctx context.Context, id string, opts client.ContainerAttachOptions) (client.ContainerAttachResult, error)) *MockClient_ContainerAttach_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // ContainerStop provides a mock function for the type MockClient
 func (_mock *MockClient) ContainerStop(ctx context.Context, id string, opts client.ContainerStopOptions) (client.ContainerStopResult, error) {
 	ret := _mock.Called(ctx, id, opts)

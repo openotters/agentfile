@@ -5,11 +5,10 @@
 // container is labelled so the daemon's boot path can sweep ghosts
 // from a previous incarnation that was killed -9 mid-flight.
 //
-// stdin is NOT supported in v1: the trimmed Client interface doesn't
-// include ContainerAttach (the only way to pipe stdin into a fresh
-// container). Stdin requests fail fast with a clear error so the
-// caller can degrade. Adding stdin = follow-up that grows the
-// Client interface and uses HijackedResponse for stdio multiplexing.
+// stdin: when non-empty, the path attaches to the container's stdio
+// BEFORE start, writes the payload to the hijacked write side,
+// half-closes it (so the BIN reads EOF and continues), then starts
+// the container. Output streaming still uses ContainerLogs.
 package docker
 
 import (
@@ -19,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -93,14 +93,6 @@ const labelOpenottersAsyncJob = "io.openotters.async-job-id"
 // what to mount. Calling Exec on an un-initialized agent surfaces
 // in ExecResult.Err.
 func (a *Agent) Exec(ctx context.Context, bin string, args []string, stdin string) executor.ExecResult {
-	if stdin != "" {
-		return executor.ExecResult{
-			Err: errors.New(
-				"docker async-exec: stdin is not supported in v1; " +
-					"pass payload via --arg or write it to the workspace and read from there"),
-		}
-	}
-
 	rt := a.Runtime()
 	if rt == nil {
 		return executor.ExecResult{
@@ -137,6 +129,16 @@ func (a *Agent) Exec(ctx context.Context, bin string, args []string, stdin strin
 		return executor.ExecResult{Err: fmt.Errorf("docker async-exec: build container spec: %w", err)}
 	}
 
+	// Stdin path: the container needs OpenStdin + StdinOnce so docker
+	// keeps stdin open across the attach, then closes it once the
+	// payload is fully read. AttachStdin lets us deliver bytes via
+	// the hijacked connection from ContainerAttach.
+	if stdin != "" {
+		cfg.OpenStdin = true
+		cfg.StdinOnce = true
+		cfg.AttachStdin = true
+	}
+
 	createResp, err := a.deps.client.ContainerCreate(ctx, mobyclient.ContainerCreateOptions{
 		Config:     cfg,
 		HostConfig: hostCfg,
@@ -155,9 +157,23 @@ func (a *Agent) Exec(ctx context.Context, bin string, args []string, stdin strin
 			mobyclient.ContainerRemoveOptions{Force: true})
 	}()
 
-	if _, err := a.deps.client.ContainerStart(ctx, id, mobyclient.ContainerStartOptions{}); err != nil {
+	// Pipe the stdin payload to the container BEFORE start. The
+	// attach call hijacks the HTTP connection; we write the payload,
+	// half-close the write side (so the BIN reads EOF), and let the
+	// log-streaming path below carry stdout/stderr like it does for
+	// the no-stdin case.
+	if stdin != "" {
+		if pipeErr := a.pipeStdin(ctx, id, stdin); pipeErr != nil {
+			return executor.ExecResult{
+				Err:    pipeErr,
+				Handle: handle,
+			}
+		}
+	}
+
+	if _, startErr := a.deps.client.ContainerStart(ctx, id, mobyclient.ContainerStartOptions{}); startErr != nil {
 		return executor.ExecResult{
-			Err:    fmt.Errorf("docker async-exec: start %s: %w", id, err),
+			Err:    fmt.Errorf("docker async-exec: start %s: %w", id, startErr),
 			Handle: handle,
 		}
 	}
@@ -197,7 +213,22 @@ func (a *Agent) Exec(ctx context.Context, bin string, args []string, stdin strin
 	defer logsResp.Close()
 
 	var stdout, stderr bytes.Buffer
-	if err := dockerStdCopy(&stdout, &stderr, logsResp); err != nil &&
+
+	// Forward live bytes to the optional stream sinks (set by the
+	// async-jobs pool so partial output lands in SQLite mid-flight).
+	// Local buffers stay the source of truth for the final
+	// ExecResult; the sinks are an additional, lossy channel.
+	streamSinks := executor.ExecStreamSinksFrom(ctx)
+	var stdoutW io.Writer = &stdout
+	var stderrW io.Writer = &stderr
+	if streamSinks.Stdout != nil {
+		stdoutW = io.MultiWriter(&stdout, streamSinks.Stdout)
+	}
+	if streamSinks.Stderr != nil {
+		stderrW = io.MultiWriter(&stderr, streamSinks.Stderr)
+	}
+
+	if err := dockerStdCopy(stdoutW, stderrW, logsResp); err != nil &&
 		!errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
 		// Non-EOF errors usually mean the docker daemon went away.
 		// Capture what we have and surface the underlying error.
@@ -239,6 +270,39 @@ func (a *Agent) Exec(ctx context.Context, bin string, args []string, stdin strin
 		out.Err = ctxErr
 	}
 	return out
+}
+
+// pipeStdin attaches to the container's hijacked stdio, writes the
+// payload, and half-closes the write side so the BIN reads EOF.
+// Pulled out of Exec to keep that function readable and stay under
+// the funlen budget.
+func (a *Agent) pipeStdin(ctx context.Context, id, payload string) error {
+	attachResp, err := a.deps.client.ContainerAttach(ctx, id, mobyclient.ContainerAttachOptions{
+		Stream: true,
+		Stdin:  true,
+	})
+	if err != nil {
+		return fmt.Errorf("docker async-exec: attach stdin %s: %w", id, err)
+	}
+	if _, wErr := io.WriteString(attachResp.Conn, payload); wErr != nil {
+		attachResp.Close()
+		return fmt.Errorf("docker async-exec: write stdin %s: %w", id, wErr)
+	}
+	// Half-close: signal EOF to the container's stdin without
+	// tearing down the read side. Falls back to a full close when
+	// the underlying conn doesn't expose CloseWrite (rare — TCP and
+	// unix domain socket both implement it).
+	type closeWriter interface{ CloseWrite() error }
+	if cw, ok := attachResp.Conn.(closeWriter); ok {
+		_ = cw.CloseWrite()
+		return nil
+	}
+	if tcp, isTCP := attachResp.Conn.(*net.TCPConn); isTCP {
+		_ = tcp.CloseWrite()
+		return nil
+	}
+	attachResp.Close()
+	return nil
 }
 
 // buildExecContainer assembles the Container.Config + HostConfig for
@@ -292,13 +356,15 @@ func (a *Agent) buildExecContainer(
 		WorkingDir: inContainerWorkspace,
 		User:       "65532:65532", // distroless nonroot — matches the agent's runtime container
 		Labels: map[string]string{
-			labelOpenottersAgent:    labelValueTrue,
-			labelOpenottersAsyncJob: jobLabel,
+			labelOpenottersAgent:     labelValueTrue,
+			labelOpenottersAsyncJob:  jobLabel,
 			"io.openotters.agent-id": a.deps.id.String(),
 		},
-		// Don't open stdin — v1 doesn't support stdin (see the function
-		// docstring). Setting this true would block ContainerStart on
-		// us never attaching.
+		// Defaults are no-stdin / no-attach; the Exec path flips
+		// OpenStdin + StdinOnce + AttachStdin when a stdin payload
+		// is supplied. Stdout/stderr always come from ContainerLogs
+		// rather than an attach, so the AttachStdout/AttachStderr
+		// flags stay off.
 		OpenStdin:    false,
 		AttachStdout: false,
 		AttachStderr: false,
