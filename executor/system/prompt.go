@@ -103,6 +103,36 @@ func (a *Agent) PromptObject(ctx context.Context, req executor.ObjectPromptReque
 	return resp.GetObjectJson(), nil
 }
 
+// Probe issues a single Ready() RPC against the running runtime.
+// Returns nil when the runtime answers Ready=true; any dial failure,
+// transport error, or Ready=false response is surfaced as an error.
+//
+// The daemon supervisor calls Probe in a retry loop after Run sets
+// StatusStarting; the first successful Probe transitions the agent
+// to StatusReady.
+func (a *Agent) Probe(ctx context.Context) error {
+	if a.addr == "" {
+		return errors.New("agent has no runtime address; configure WithAddr before Run")
+	}
+
+	conn, err := a.dial(ctx)
+	if err != nil {
+		return fmt.Errorf("dial runtime: %w", err)
+	}
+
+	client := agentv1.NewAgentRuntimeClient(conn)
+	resp, err := client.Ready(ctx, &agentv1.ReadyRequest{})
+	if err != nil {
+		return fmt.Errorf("runtime Ready RPC: %w", err)
+	}
+
+	if !resp.GetReady() {
+		return errors.New("runtime reported ready=false")
+	}
+
+	return nil
+}
+
 // dial returns the cached gRPC connection to the runtime, opening one on
 // first call via a.dialer. The connection is closed by closeClient on
 // Stop/Remove. Timeout + Ready-wait semantics live inside the Dialer

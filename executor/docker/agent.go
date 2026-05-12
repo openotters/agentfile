@@ -90,6 +90,13 @@ func (a *Agent) Runtime() *executor.Runtime {
 // Status returns the current lifecycle state.
 func (a *Agent) Status() executor.Status { return a.status.Get() }
 
+// FailureReason returns the cause when Status() == StatusFailed.
+func (a *Agent) FailureReason() executor.FailureReason { return a.status.Failure() }
+
+// StatusTracker exposes the underlying tracker — see the comment on
+// the system Agent for how the daemon supervisor uses it.
+func (a *Agent) StatusTracker() *executor.StatusTracker { return a.status }
+
 // SubscribeStatus returns a channel of status transitions and a
 // cancel function.
 func (a *Agent) SubscribeStatus() (<-chan executor.Status, func()) {
@@ -152,11 +159,11 @@ func (a *Agent) Prepare(ctx context.Context) error {
 	if err != nil {
 		switch {
 		case errors.Is(err, system.ErrPull):
-			a.status.Set(executor.StatusPullError)
+			a.status.SetFailure(executor.FailurePull)
 		case errors.Is(err, system.ErrModel):
-			a.status.Set(executor.StatusModelError)
+			a.status.SetFailure(executor.FailureModel)
 		default:
-			a.status.Set(executor.StatusInitError)
+			a.status.SetFailure(executor.FailureInit)
 		}
 
 		return err
@@ -170,50 +177,65 @@ func (a *Agent) Prepare(ctx context.Context) error {
 	return nil
 }
 
-// Run materialises (if needed), starts the runtime container, and
-// blocks until the container exits or ctx is cancelled.
+// Run materialises (if needed), pulls images, creates+starts the
+// runtime container, then blocks on wait.
+//
+// Lifecycle: Pulling (entry — covers MaterializeContent + the docker
+// image pulls for runtime / base / BINs) → Starting (create + start)
+// → (daemon supervisor flips to Ready once readiness probe answers)
+// → Stopped on container exit.
 func (a *Agent) Run(ctx context.Context) error {
+	a.status.Set(executor.StatusPulling)
+
 	if err := a.Prepare(ctx); err != nil {
 		return err
 	}
-
-	a.status.Set(executor.StatusRunning)
 
 	ran := make(chan struct{})
 	a.setRan(ran)
 
 	defer func() {
 		close(ran)
-		a.status.Set(executor.StatusStopped)
+		// Preserve Failed: SetFailure(...) inside ensureImagesPulled
+		// / create / start / wait should outlive this clean-up so the
+		// daemon supervisor still sees the FailureReason.
+		if a.status.Get() != executor.StatusFailed {
+			a.status.Set(executor.StatusStopped)
+		}
 	}()
 
 	if err := a.ensureImagesPulled(ctx); err != nil {
-		a.status.Set(executor.StatusInitError)
+		a.status.SetFailure(executor.FailurePull)
 		return err
 	}
 
+	a.status.Set(executor.StatusStarting)
+
 	if err := a.create(ctx); err != nil {
-		a.status.Set(executor.StatusInitError)
+		a.status.SetFailure(executor.FailureInit)
 		return err
 	}
 
 	if err := a.start(ctx); err != nil {
-		a.status.Set(executor.StatusInitError)
+		a.status.SetFailure(executor.FailureInit)
 		return err
 	}
 
 	return a.wait(ctx)
 }
 
-// Start re-runs a stopped agent.
+// Start re-runs a stopped (or failed) agent. Rejects when the agent
+// is already in flight (pulling / starting / ready / working) or
+// removed.
 func (a *Agent) Start(ctx context.Context) error {
 	switch a.Status() {
-	case executor.StatusRunning:
+	case executor.StatusPulling, executor.StatusStarting,
+		executor.StatusReady, executor.StatusWorking:
 		return fmt.Errorf("agent already running")
 	case executor.StatusRemoving, executor.StatusRemoved:
 		return fmt.Errorf("agent removed")
-	case executor.StatusCreated, executor.StatusStopped,
-		executor.StatusInitError, executor.StatusPullError, executor.StatusModelError:
+	case executor.StatusStopped, executor.StatusFailed:
+		// startable: fall through
 	}
 
 	return a.Run(ctx)

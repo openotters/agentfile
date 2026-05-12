@@ -29,8 +29,8 @@ func TestNewAgent_Defaults(t *testing.T) {
 		t.Fatalf("Runtime() = %v, want nil before Prepare", a.Runtime())
 	}
 
-	if got := a.Status(); got != executor.StatusCreated {
-		t.Fatalf("Status() = %v, want StatusCreated", got)
+	if got := a.Status(); got != executor.StatusPulling {
+		t.Fatalf("Status() = %v, want StatusPulling (zero value)", got)
 	}
 }
 
@@ -70,10 +70,10 @@ func TestAgent_StatusTrackerWired(t *testing.T) {
 
 	a := NewAgent(uuid.New(), memfs.New())
 
-	a.status.Set(executor.StatusRunning)
+	a.status.Set(executor.StatusReady)
 
-	if got := a.Status(); got != executor.StatusRunning {
-		t.Fatalf("Status() = %v after Set, want StatusRunning", got)
+	if got := a.Status(); got != executor.StatusReady {
+		t.Fatalf("Status() = %v after Set, want StatusReady", got)
 	}
 
 	ch, cancel := a.SubscribeStatus()

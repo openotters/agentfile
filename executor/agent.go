@@ -12,6 +12,10 @@ import (
 type StatusObserver interface {
 	// Status returns the current state.
 	Status() Status
+	// FailureReason returns the cause when Status() == StatusFailed.
+	// Returns FailureNone for non-failed states; callers can render
+	// the zero value as the empty string via FailureReason.String().
+	FailureReason() FailureReason
 	// SubscribeStatus returns a channel of status transitions and a cancel
 	// function that closes the channel. Sends are non-blocking: slow
 	// subscribers may miss intermediate transitions; call Status() to
@@ -29,8 +33,8 @@ type StatusObserver interface {
 // Run starts the runtime subprocess, blocking until it exits or ctx is
 // cancelled. Run calls Prepare internally if the workspace has not yet
 // been materialized; initialization errors are returned directly and
-// also surfaced via Status (StatusInitError / StatusPullError /
-// StatusModelError).
+// also surfaced via Status (StatusFailed with a FailureReason of
+// FailurePull / FailureInit / FailureModel).
 //
 // Start re-runs a previously-stopped agent on the already-materialized
 // workspace. Blocks until the subprocess exits or ctx is cancelled, same
@@ -51,6 +55,25 @@ type Agent interface {
 	Start(ctx context.Context) error
 	Stop(ctx context.Context) error
 	Remove(ctx context.Context) error
+
+	// StatusTracker exposes the underlying tracker so the daemon
+	// supervisor can drive transitions it owns (Ready after the
+	// readiness probe answers, Working ↔ Ready around in-flight RPCs,
+	// Failed+FailureReadinessTimeout on probe timeout, Failed+
+	// FailureCrashed on unexpected exit). Executors mutate their own
+	// status through this same tracker for the Pulling / Starting /
+	// Stopped / Failed transitions they own.
+	StatusTracker() *StatusTracker
+
+	// Probe issues a single readiness check against the running
+	// runtime. Returns nil when the runtime answered Ready=true.
+	// Returns a non-nil error when the dial fails, the call returns
+	// Unavailable, or ctx expires.
+	//
+	// Used by the daemon supervisor to gate the Starting → Ready
+	// transition. Implementations should not retry internally — the
+	// caller owns the backoff and the overall timeout.
+	Probe(ctx context.Context) error
 
 	// Exec runs a BIN command in this agent's spawn env: same image,
 	// same BIN namespace on PATH, agent workspace as cwd. Implementations

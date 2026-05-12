@@ -85,6 +85,16 @@ func (a *Agent) Addr() string { return a.addr }
 // access with Start/Stop/Remove.
 func (a *Agent) Status() executor.Status { return a.status.Get() }
 
+// FailureReason returns the cause when Status() == StatusFailed.
+// Returns FailureNone for non-failed states.
+func (a *Agent) FailureReason() executor.FailureReason { return a.status.Failure() }
+
+// StatusTracker exposes the underlying tracker. The daemon supervisor
+// uses it for the Ready / Working / readiness-timeout / crashed
+// transitions it owns; tests reach for it to assert specific
+// sequences without coupling to the Set/SetFailure call sites.
+func (a *Agent) StatusTracker() *executor.StatusTracker { return a.status }
+
 // SubscribeStatus returns a channel of status transitions and a
 // cancel function. Sends are non-blocking; slow subscribers may miss
 // intermediate transitions — call Status() to resync. Always call
@@ -107,15 +117,22 @@ func (a *Agent) ReapplyMounts() error {
 
 // Prepare materializes the workspace synchronously. Idempotent and safe to
 // call concurrently; repeat callers observe the same error.
+//
+// Status transitions on the way through:
+//   - On entry: Pulling (set by Run; Prepare leaves it alone so a
+//     standalone Prepare call still surfaces the pull window).
+//   - On success: caller (Run) flips to Starting.
+//   - On error: Failed with a FailureReason derived from the error
+//     sentinel (FailurePull / FailureModel / FailureInit).
 func (a *Agent) Prepare(ctx context.Context) error {
 	if err := a.initialize(ctx); err != nil {
 		switch {
 		case errors.Is(err, ErrPull):
-			a.status.Set(executor.StatusPullError)
+			a.status.SetFailure(executor.FailurePull)
 		case errors.Is(err, ErrModel):
-			a.status.Set(executor.StatusModelError)
+			a.status.SetFailure(executor.FailureModel)
 		default:
-			a.status.Set(executor.StatusInitError)
+			a.status.SetFailure(executor.FailureInit)
 		}
 
 		return err
@@ -125,47 +142,59 @@ func (a *Agent) Prepare(ctx context.Context) error {
 }
 
 // Run materializes the workspace (if needed), starts the serve process, and blocks.
+//
+// Lifecycle: Pulling (entry) → Starting (after Prepare returns) →
+// (daemon supervisor flips to Ready once the readiness probe answers)
+// → Stopped on subprocess exit (the daemon decides whether to retry
+// or mark Failed+FailureCrashed).
 func (a *Agent) Run(ctx context.Context) error {
+	a.status.Set(executor.StatusPulling)
+
 	if err := a.Prepare(ctx); err != nil {
 		return err
 	}
 
-	a.status.Set(executor.StatusRunning)
+	a.status.Set(executor.StatusStarting)
 
 	ran := make(chan struct{})
 	a.setRan(ran)
 
 	defer func() {
 		close(ran)
-		a.status.Set(executor.StatusStopped)
+		// Preserve Failed: anything inside proc.serve that set a
+		// FailureReason should outlive this unconditional clean-up.
+		if a.status.Get() != executor.StatusFailed {
+			a.status.Set(executor.StatusStopped)
+		}
 	}()
 
 	return a.proc.serve(ctx, a.cmdFn)
 }
 
-// Start re-runs a stopped agent on the already-materialized workspace.
-// Blocks until the subprocess exits or ctx is cancelled (same contract as
-// Run). Returns an error if the agent is already running or has been
-// removed. The loopback address from the original Create is reused.
+// Start re-runs a stopped (or failed) agent. Blocks until the
+// subprocess exits or ctx is cancelled (same contract as Run).
+// Returns an error if the agent is already pulling / starting /
+// ready / working / removed. The loopback address from the original
+// Create is reused.
 //
 // Before re-running, Start re-invokes the model resolver against the
 // agent's resolved model, so providers.yaml edits made between Stop
 // and Start (key rotation, api-base change) take effect on the next
-// subprocess. Fresh-create agents (StatusCreated) bypass this branch
+// subprocess. Fresh agents (still in StatusPulling) bypass this branch
 // — Run → Prepare → materialize will resolve on its own.
 func (a *Agent) Start(ctx context.Context) error {
 	switch a.Status() {
-	case executor.StatusRunning:
+	case executor.StatusPulling, executor.StatusStarting,
+		executor.StatusReady, executor.StatusWorking:
 		return fmt.Errorf("agent already running")
 	case executor.StatusRemoving, executor.StatusRemoved:
 		return fmt.Errorf("agent removed")
-	case executor.StatusCreated, executor.StatusStopped,
-		executor.StatusInitError, executor.StatusPullError, executor.StatusModelError:
+	case executor.StatusStopped, executor.StatusFailed:
 		// startable: fall through
 	}
 
 	if err := a.reresolveCredentials(); err != nil {
-		a.status.Set(executor.StatusModelError)
+		a.status.SetFailure(executor.FailureModel)
 
 		return err
 	}

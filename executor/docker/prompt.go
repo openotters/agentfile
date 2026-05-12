@@ -32,6 +32,33 @@ func (a *Agent) Addr() string {
 	return "127.0.0.1:" + a.deps.hostGRPCPort
 }
 
+// Probe issues a single Ready() RPC against the runtime inside the
+// container, dialing the host loopback port. Used by the daemon
+// supervisor to gate the Starting → Ready transition.
+func (a *Agent) Probe(ctx context.Context) error {
+	addr := a.Addr()
+	if addr == "" {
+		return errors.New("docker agent has no runtime address (Run not called?)")
+	}
+
+	conn, err := a.dial(ctx, addr)
+	if err != nil {
+		return fmt.Errorf("dial runtime: %w", err)
+	}
+
+	client := agentv1.NewAgentRuntimeClient(conn)
+	resp, err := client.Ready(ctx, &agentv1.ReadyRequest{})
+	if err != nil {
+		return fmt.Errorf("runtime Ready RPC: %w", err)
+	}
+
+	if !resp.GetReady() {
+		return errors.New("runtime reported ready=false")
+	}
+
+	return nil
+}
+
 // Prompt opens a ChatStream and writes the final assistant response
 // into w, discarding intermediate tool/step/delta events. Mirrors the
 // system executor's Prompter implementation; the only difference is

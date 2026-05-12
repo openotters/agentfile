@@ -121,8 +121,12 @@ func TestPrepare_MaterializeErrorSetsPullError(t *testing.T) {
 		t.Fatal("Prepare with empty store = nil, want error")
 	}
 
-	if got := a.Status(); got != executor.StatusPullError {
-		t.Fatalf("Status after failed Prepare = %v, want StatusPullError", got)
+	if got := a.Status(); got != executor.StatusFailed {
+		t.Fatalf("Status after failed Prepare = %v, want StatusFailed", got)
+	}
+
+	if got := a.FailureReason(); got != executor.FailurePull {
+		t.Fatalf("FailureReason after failed Prepare = %v, want FailurePull", got)
 	}
 }
 
@@ -161,8 +165,12 @@ func TestPrepare_ModelResolverErrorSetsModelError(t *testing.T) {
 		t.Fatalf("Prepare err = %v, want errors.Is ErrModel", err)
 	}
 
-	if got := a.Status(); got != executor.StatusModelError {
-		t.Fatalf("Status after failed Prepare = %v, want StatusModelError", got)
+	if got := a.Status(); got != executor.StatusFailed {
+		t.Fatalf("Status after failed Prepare = %v, want StatusFailed", got)
+	}
+
+	if got := a.FailureReason(); got != executor.FailureModel {
+		t.Fatalf("FailureReason after failed Prepare = %v, want FailureModel", got)
 	}
 }
 
@@ -224,8 +232,12 @@ func TestPrepare_RetriesAfterModelError(t *testing.T) {
 		t.Fatalf("first Prepare = %v, want ErrModel", err)
 	}
 
-	if got := a.Status(); got != executor.StatusModelError {
-		t.Fatalf("status after first Prepare = %v, want StatusModelError", got)
+	if got := a.Status(); got != executor.StatusFailed {
+		t.Fatalf("status after first Prepare = %v, want StatusFailed", got)
+	}
+
+	if got := a.FailureReason(); got != executor.FailureModel {
+		t.Fatalf("failure reason after first Prepare = %v, want FailureModel", got)
 	}
 
 	// Swap to a working resolver and retry — must materialize this time.
@@ -351,8 +363,12 @@ func TestStart_FailsWithModelErrorOnReResolveFailure(t *testing.T) {
 		t.Fatalf("Start err = %v, want errors.Is ErrModel", err)
 	}
 
-	if got := a.Status(); got != executor.StatusModelError {
-		t.Fatalf("status after Start = %v, want StatusModelError", got)
+	if got := a.Status(); got != executor.StatusFailed {
+		t.Fatalf("status after Start = %v, want StatusFailed", got)
+	}
+
+	if got := a.FailureReason(); got != executor.FailureModel {
+		t.Fatalf("failure reason after Start = %v, want FailureModel", got)
 	}
 
 	// Original credentials must remain — no torn write.
@@ -455,7 +471,7 @@ func TestStart_RefusesRunningAgent(t *testing.T) {
 	t.Parallel()
 
 	a := NewAgent(uuid.New(), memfs.New())
-	a.status.Set(executor.StatusRunning)
+	a.status.Set(executor.StatusReady)
 
 	err := a.Start(context.Background())
 	if err == nil || err.Error() != "agent already running" {
