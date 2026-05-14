@@ -75,7 +75,7 @@ func TestBuild(t *testing.T) {
 	af, src := newTestAgentfile(t)
 	store := memory.New()
 
-	digest, err := build.Build(context.Background(), af, src, store)
+	digest, err := build.Build(context.Background(), af, nil, src, store)
 	if err != nil {
 		t.Fatalf("build error: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestBuildPushPull_Roundtrip(t *testing.T) {
 	af, src := newTestAgentfile(t)
 	store := memory.New()
 
-	buildRef, err := build.Build(context.Background(), af, src, store)
+	buildRef, err := build.Build(context.Background(), af, nil, src, store)
 	if err != nil {
 		t.Fatalf("build error: %v", err)
 	}

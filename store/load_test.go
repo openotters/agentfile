@@ -47,7 +47,7 @@ func buildFixture(t *testing.T) (*memory.Store, spec.Reference) {
 
 	s := memory.New()
 
-	ref, err := build.Build(context.Background(), af, src, s)
+	ref, err := build.Build(context.Background(), af, nil, src, s)
 	if err != nil {
 		t.Fatalf("build.Build: %v", err)
 	}

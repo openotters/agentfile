@@ -59,7 +59,7 @@ func buildMaterializeFixture(t *testing.T) (*memory.Store, spec.Reference) {
 	}
 
 	s := memory.New()
-	ref, err := build.Build(context.Background(), af, srcFS, s)
+	ref, err := build.Build(context.Background(), af, nil, srcFS, s)
 	if err != nil {
 		t.Fatalf("build.Build: %v", err)
 	}

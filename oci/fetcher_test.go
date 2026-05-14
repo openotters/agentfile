@@ -36,7 +36,7 @@ func TestLoadAgentFromSource_TaggedRef(t *testing.T) {
 		},
 	}
 
-	built, err := build.Build(ctx, parentAF, memfs.New(), src)
+	built, err := build.Build(ctx, parentAF, nil, memfs.New(), src)
 	if err != nil {
 		t.Fatalf("build.Build: %v", err)
 	}

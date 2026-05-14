@@ -28,6 +28,12 @@ func main() {
 	path := os.Args[1]
 	output := os.Args[2]
 
+	source, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
 	af, err := spec.ParseFile(path)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -38,7 +44,7 @@ func main() {
 
 	store := memory.New()
 
-	ref, err := build.Build(context.Background(), af, osfs.New(srcDir), store)
+	ref, err := build.Build(context.Background(), af, source, osfs.New(srcDir), store)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

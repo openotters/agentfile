@@ -501,6 +501,17 @@ func (w *workspace) writeMountsContext(fs billy.Filesystem) error {
 }
 
 func (w *workspace) extractLayers(ctx context.Context, fs billy.Filesystem, manifest *v1.Manifest) error {
+	for _, layer := range afstore.Layers(manifest, spec.AgentfileMediaType) {
+		data, err := afstore.FetchLayer(ctx, w.store, layer)
+		if err != nil {
+			return fmt.Errorf("fetching agentfile: %w", err)
+		}
+
+		if e := util.WriteFile(fs, filepath.Join("etc", "Agentfile"), data, 0o644); e != nil {
+			return fmt.Errorf("writing agentfile: %w", e)
+		}
+	}
+
 	for _, layer := range afstore.Layers(manifest, spec.ContextLayerMediaType) {
 		title := layer.Annotations[v1.AnnotationTitle]
 		if title == "" {

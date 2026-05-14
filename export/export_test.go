@@ -58,7 +58,7 @@ func TestExportImport_Roundtrip(t *testing.T) {
 
 	store := memory.New()
 
-	buildRef, err := build.Build(context.Background(), af, src, store)
+	buildRef, err := build.Build(context.Background(), af, nil, src, store)
 	if err != nil {
 		t.Fatalf("build error: %v", err)
 	}

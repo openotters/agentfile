@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 
 	"github.com/go-git/go-billy/v6"
@@ -28,7 +29,12 @@ import (
 // FromFile parses an Agentfile, resolves FROM inheritance, and builds the
 // OCI artifact into target. Returns the image reference with digest.
 func FromFile(ctx context.Context, agentfilePath string, target oras.Target) (*spec.ReferenceWithDigest, error) {
-	af, err := spec.ParseFile(agentfilePath)
+	source, err := os.ReadFile(agentfilePath)
+	if err != nil {
+		return nil, fmt.Errorf("reading agentfile: %w", err)
+	}
+
+	af, err := spec.Parse(bytes.NewReader(source))
 	if err != nil {
 		return nil, fmt.Errorf("parsing: %w", err)
 	}
@@ -40,7 +46,7 @@ func FromFile(ctx context.Context, agentfilePath string, target oras.Target) (*s
 
 	srcDir, _ := filepath.Abs(filepath.Dir(agentfilePath))
 
-	ref, err := Build(ctx, resolvedaf, osfs.New(srcDir), target)
+	ref, err := Build(ctx, resolvedaf, source, osfs.New(srcDir), target)
 	if err != nil {
 		return nil, fmt.Errorf("building: %w", err)
 	}
@@ -48,18 +54,33 @@ func FromFile(ctx context.Context, agentfilePath string, target oras.Target) (*s
 	return ref, nil
 }
 
-// Build creates an OCI artifact from a parsed Agentfile and pushes it into dst.
-// Context and ADD files are read from src. The manifest is tagged with the agent
-// name in dst. Returns the image reference with digest.
+// Build creates an OCI artifact from a parsed Agentfile and pushes it
+// into dst. `source` carries the verbatim Agentfile DSL bytes — they
+// ride along as their own layer so consumers can read what the
+// operator actually wrote, not a marshal/reconstruct of the parsed
+// spec. Context and ADD files are read from src. The manifest is
+// tagged with the agent name in dst. Returns the image reference
+// with digest.
 func Build(
 	ctx context.Context,
 	af *spec.Agentfile,
+	source []byte,
 	src billy.Filesystem,
 	dst oras.Target,
 ) (*spec.ReferenceWithDigest, error) {
 	agent := af.Agent
 
 	var layers []v1.Descriptor
+
+	if len(source) > 0 {
+		annotations := map[string]string{v1.AnnotationTitle: "Agentfile"}
+		desc, err := pushBlob(ctx, dst, spec.AgentfileMediaType, source, annotations)
+		if err != nil {
+			return nil, fmt.Errorf("pushing agentfile source: %w", err)
+		}
+
+		layers = append(layers, desc)
+	}
 
 	for _, c := range agent.Contexts {
 		ct, err := resolveContextContent(c, src)
