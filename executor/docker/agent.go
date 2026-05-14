@@ -350,10 +350,10 @@ func (a *Agent) pullImage(ctx context.Context, ref string) error {
 }
 
 func (a *Agent) runtimeRef(rt *executor.Runtime) string {
-	if rt.Provenance != nil && rt.Provenance.RuntimeRef != "" {
-		return rt.Provenance.RuntimeRef
+	if rt.Runtime != nil {
+		return rt.Runtime.Ref
 	}
-	if rt.Source != nil {
+	if rt.Source != nil && rt.Source.Agent != nil {
 		return rt.Source.Agent.Runtime
 	}
 	return ""
@@ -393,19 +393,21 @@ func (a *Agent) create(ctx context.Context) error {
 
 	provider, _ := splitProviderPrefix(rt.Model)
 
-	var userEnvs []*spec.Env
-	if rt.Source != nil && rt.Source.Agent != nil {
-		userEnvs = rt.Source.Agent.Envs
-	}
+	// Envs come from ResolvedConfig.Envs — the daemon hydrates Value
+	// in-memory at Restore/Start from etc/Agentfile defaults + the
+	// operator overrides it persists in daemon.db. agent.yaml's
+	// envs[] entries only carry Key + Description.
+	userEnvs := rt.Envs
 
-	// Per-run user mounts come through spec.WithMounts populating
-	// rt.Source.Agent.RuntimeMounts; the legacy provider-level
+	// Mounts come from ResolvedConfig.Mounts the same way: Host is
+	// hydrated in-memory from daemon.db; agent.yaml carries only
+	// target/description/read-only. The legacy provider-level
 	// docker.WithMounts (deps.mounts) is the fallback for callers
-	// that haven't migrated yet.
+	// that haven't migrated.
 	userMounts := a.deps.mounts
-	if rt.Source != nil && rt.Source.Agent != nil && len(rt.Source.Agent.RuntimeMounts) > 0 {
-		userMounts = make([]executor.Mount, 0, len(rt.Source.Agent.RuntimeMounts))
-		for _, m := range rt.Source.Agent.RuntimeMounts {
+	if len(rt.Mounts) > 0 {
+		userMounts = make([]executor.Mount, 0, len(rt.Mounts))
+		for _, m := range rt.Mounts {
 			if m == nil {
 				continue
 			}

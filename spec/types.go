@@ -32,10 +32,15 @@ type Agent struct {
 // (Agentfile mutator) can carry it without a circular import on
 // executor.
 type Mount struct {
-	Host        string
-	Target      string
-	Description string
-	ReadOnly    bool
+	// Host is the operator-supplied host path bound at run time
+	// (`otters run -v HOST:TARGET[:ro]`). It's never persisted to
+	// agent.yaml — the daemon stores it in its own state and
+	// re-applies on every Restore / Start. Disk-side, only the
+	// target + description + read-only flag live in agent.yaml.
+	Host        string `yaml:"-" json:"host,omitempty"`
+	Target      string `yaml:"target" json:"target"`
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	ReadOnly    bool   `yaml:"read_only,omitempty" json:"read_only,omitempty"`
 }
 
 type Context struct {
@@ -69,9 +74,15 @@ type Bin struct {
 // any *_API_KEY / *_API_BASE) are rejected by Validate to keep the
 // locked-down env contract intact.
 type Env struct {
-	Key         string `json:"key"`
-	Value       string `json:"value"`
-	Description string `json:"description,omitempty"`
+	Key string `yaml:"key" json:"key"`
+	// Value is the spawn-time value the daemon resolves from the
+	// Agentfile's default and any operator override. It's never
+	// persisted to agent.yaml — secrets are kept out of the
+	// workspace by construction. The daemon hydrates this field
+	// in-memory at Restore / Start and supplies it via the spawn
+	// env to the runtime subprocess.
+	Value       string `yaml:"-" json:"value"`
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 }
 
 type Add struct {

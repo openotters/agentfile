@@ -118,14 +118,14 @@ func TestAgent_RuntimeRef(t *testing.T) {
 		t.Errorf("runtimeRef no-source = %q, want empty", got)
 	}
 
-	// Provenance wins when set.
+	// Runtime OCIRef wins when set.
 	rt := &executor.Runtime{
 		ResolvedConfig: executor.ResolvedConfig{
-			Provenance: &executor.Provenance{RuntimeRef: "ghcr.io/openotters/runtime:v1"},
+			Runtime: &executor.OCIRef{Ref: "ghcr.io/openotters/runtime:v1"},
 		},
 	}
 	if got := a.runtimeRef(rt); got != "ghcr.io/openotters/runtime:v1" {
-		t.Errorf("runtimeRef provenance = %q", got)
+		t.Errorf("runtimeRef runtime-ref = %q", got)
 	}
 }
 

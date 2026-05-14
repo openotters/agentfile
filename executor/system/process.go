@@ -101,12 +101,12 @@ func buildCmdEnv(rt *executor.Runtime, rootDir, daemonURL, agentToken string) []
 		}
 	}
 
-	// User-declared ENV from the agentspec, last so it can shadow
-	// nothing reserved (AppendUserEnv filters reserved keys; spec
-	// validation already rejects them at build time).
-	if rt.Source != nil && rt.Source.Agent != nil {
-		env, _ = executor.AppendUserEnv(env, rt.Source.Agent.Envs)
-	}
+	// User-declared ENV from the resolved config, last so it can
+	// shadow nothing reserved (AppendUserEnv filters reserved keys;
+	// spec validation already rejects them at build time). Values
+	// are hydrated by the daemon in-memory at Restore/Start; they
+	// don't live in agent.yaml.
+	env, _ = executor.AppendUserEnv(env, rt.Envs)
 
 	return env
 }

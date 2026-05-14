@@ -16,9 +16,9 @@ func newRT(t *testing.T) *executor.Runtime {
 	t.Helper()
 
 	return &executor.Runtime{
-		ID:     uuid.New(),
 		Source: &spec.Agentfile{Syntax: spec.DefaultSyntax, Agent: &spec.Agent{Name: "x"}},
 		ResolvedConfig: executor.ResolvedConfig{
+			ID:      uuid.New(),
 			Name:    "x",
 			Model:   "anthropic/claude",
 			APIBase: "https://api.example.com",

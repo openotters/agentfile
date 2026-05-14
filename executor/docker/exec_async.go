@@ -347,9 +347,7 @@ func (a *Agent) buildExecContainer(
 			env = append(env, fmt.Sprintf("%s_API_BASE=%s", prefix, rt.APIBase))
 		}
 	}
-	if rt.Source != nil && rt.Source.Agent != nil {
-		env, _ = executor.AppendUserEnv(env, rt.Source.Agent.Envs)
-	}
+	env, _ = executor.AppendUserEnv(env, rt.Envs)
 
 	cmd := append([]string{bin}, args...)
 
@@ -415,9 +413,9 @@ func (a *Agent) buildExecContainer(
 	// per-run RuntimeMounts when present, fall back to the
 	// provider-level deps.mounts for callers still on docker.WithMounts.
 	userMounts := a.deps.mounts
-	if rt.Source != nil && rt.Source.Agent != nil && len(rt.Source.Agent.RuntimeMounts) > 0 {
-		userMounts = make([]executor.Mount, 0, len(rt.Source.Agent.RuntimeMounts))
-		for _, m := range rt.Source.Agent.RuntimeMounts {
+	if len(rt.Mounts) > 0 {
+		userMounts = make([]executor.Mount, 0, len(rt.Mounts))
+		for _, m := range rt.Mounts {
 			if m == nil {
 				continue
 			}

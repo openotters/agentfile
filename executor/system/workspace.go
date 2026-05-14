@@ -156,60 +156,9 @@ func (w *workspace) materializeContent(
 		return nil, nil, fmt.Errorf("writing AGENT.md: %w", e)
 	}
 
-	rt := &executor.Runtime{
-		ID:     id,
-		Source: af,
-		ResolvedConfig: executor.ResolvedConfig{
-			Name:  af.Agent.Name,
-			Model: af.Agent.Model,
-			Addr:  addr,
-			Exec:  af.Agent.Exec,
-		},
-	}
-
-	if w.modelResolver != nil {
-		apiURL, apiKey, resolveErr := w.modelResolver(af.Agent.Model)
-		if resolveErr != nil {
-			return nil, nil, errors.Join(ErrModel, fmt.Errorf("resolving model: %w", resolveErr))
-		}
-
-		rt.APIBase = apiURL
-		rt.APIKey = apiKey
-	}
-
-	for _, t := range af.Agent.Bins {
-		binary := filepath.Join(binDir, t.Name)
-		if w.toolBinaryPath != nil {
-			if override := w.toolBinaryPath(t.Name); override != "" {
-				binary = override
-			}
-		}
-
-		// Docs.Usage is stamped optimistically with the conventional
-		// path inside the agent tree. The actual file is written by
-		// installToolDocs (system path) / InstallToolDocs (docker
-		// path); if the BIN image carries no USAGE.md the file never
-		// lands and the runtime's loader silently skips the entry.
-		// Both backends read the bind-mounted relative path the same
-		// way, so no docker-specific override is needed.
-		rt.Tools = append(rt.Tools, executor.ResolvedTool{
-			Name:        t.Name,
-			Description: t.Description,
-			Binary:      binary,
-			Ref:         t.Image,
-			Digest:      w.resolveDigest(t.Image),
-			Docs: executor.ToolDocs{
-				Usage: filepath.Join(dataDir, "bins", t.Name, "USAGE.md"),
-			},
-		})
-	}
-
-	if w.imageRef != "" || af.Agent.Runtime != "" {
-		rt.Provenance = &executor.Provenance{
-			ImageDigest:   w.resolveDigest(w.imageRef),
-			RuntimeRef:    af.Agent.Runtime,
-			RuntimeDigest: w.resolveDigest(af.Agent.Runtime),
-		}
+	rt, err := w.buildRuntime(af, id, addr)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	if e := rt.WriteTo(fs); e != nil {
@@ -619,6 +568,106 @@ func pullBin(ctx context.Context, puller agentoci.Puller, fs billy.Filesystem, r
 	}
 
 	return pullErr
+}
+
+// buildRuntime assembles the in-memory *executor.Runtime from the
+// resolved Agentfile. Pulled out of materializeContent to keep that
+// function focused on filesystem materialisation steps; this one is
+// pure struct-construction (config-only, no I/O on fs).
+func (w *workspace) buildRuntime(af *spec.Agentfile, id uuid.UUID, addr string) (*executor.Runtime, error) {
+	rt := &executor.Runtime{
+		Source: af,
+		ResolvedConfig: executor.ResolvedConfig{
+			ID:        id,
+			Name:      af.Agent.Name,
+			Model:     af.Agent.Model,
+			Workspace: "/workspace",
+			Configs:   configsFromSpec(af.Agent.Configs),
+			Envs:      af.Agent.Envs,
+			Mounts:    af.Agent.RuntimeMounts,
+			Context:   contextPathsFromSpec(af.Agent.Contexts),
+			Addr:      addr,
+			Exec:      af.Agent.Exec,
+		},
+	}
+
+	if w.imageRef != "" {
+		rt.Image = &executor.OCIRef{
+			Ref:    w.imageRef,
+			Digest: w.resolveDigest(w.imageRef),
+		}
+	}
+
+	if af.Agent.Runtime != "" {
+		rt.Runtime = &executor.OCIRef{
+			Ref:    af.Agent.Runtime,
+			Digest: w.resolveDigest(af.Agent.Runtime),
+		}
+	}
+
+	if w.modelResolver != nil {
+		apiURL, apiKey, resolveErr := w.modelResolver(af.Agent.Model)
+		if resolveErr != nil {
+			return nil, errors.Join(ErrModel, fmt.Errorf("resolving model: %w", resolveErr))
+		}
+
+		rt.APIBase = apiURL
+		rt.APIKey = apiKey
+	}
+
+	for _, t := range af.Agent.Bins {
+		binary := filepath.Join(binDir, t.Name)
+		if w.toolBinaryPath != nil {
+			if override := w.toolBinaryPath(t.Name); override != "" {
+				binary = override
+			}
+		}
+
+		// Usage is stamped optimistically with the conventional path
+		// inside the agent tree. The actual file is written by
+		// installToolDocs (system path) / InstallToolDocs (docker
+		// path); if the BIN image carries no USAGE.md the file never
+		// lands and the runtime's loader silently skips the entry.
+		rt.Tools = append(rt.Tools, executor.ResolvedTool{
+			Name:        t.Name,
+			Description: t.Description,
+			Binary:      binary,
+			Ref:         t.Image,
+			Digest:      w.resolveDigest(t.Image),
+			Usage:       "/" + filepath.Join(dataDir, "bins", t.Name, "USAGE.md"),
+		})
+	}
+
+	return rt, nil
+}
+
+// configsFromSpec flattens the spec's []*Config (key/value records)
+// into the map[string]string shape agent.yaml carries — one
+// kebab-case key per CONFIG directive. Each value is rendered with
+// fmt.%v so booleans and numbers serialise consistently.
+func configsFromSpec(in []*spec.Config) map[string]string {
+	out := map[string]string{}
+	for _, c := range in {
+		if c == nil || c.Key == "" {
+			continue
+		}
+		out[c.Key] = fmt.Sprintf("%v", c.Value)
+	}
+	return out
+}
+
+// contextPathsFromSpec converts each CONTEXT directive into the
+// absolute (agent-root) path of the materialised .md file. The
+// runtime loads exactly this list — no more dir-scan.
+func contextPathsFromSpec(in []*spec.Context) []string {
+	out := make([]string, 0, len(in))
+	for _, c := range in {
+		if c == nil || c.Name == "" {
+			continue
+		}
+		out = append(out, "/"+filepath.Join(contextDir, c.Name+".md"))
+	}
+	return out
 }
 
 // copyLocalFile copies src (read through hostFS) to dest (written into

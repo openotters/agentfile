@@ -273,7 +273,9 @@ func TestBuildCmdEnv_AppendsUserEnv(t *testing.T) {
 	t.Parallel()
 
 	rt := &executor.Runtime{
-		Source: &spec.Agentfile{Agent: &spec.Agent{
+		ResolvedConfig: executor.ResolvedConfig{
+			Model:  "anthropic/m",
+			APIKey: "k",
 			Envs: []*spec.Env{
 				{Key: "NODE_ENV", Value: "production"},
 				{Key: "FEATURE_X", Value: "on"},
@@ -282,8 +284,7 @@ func TestBuildCmdEnv_AppendsUserEnv(t *testing.T) {
 				{Key: "PATH", Value: "/evil"},
 				{Key: "STRIPE_API_KEY", Value: "sk_test"},
 			},
-		}},
-		ResolvedConfig: executor.ResolvedConfig{Model: "anthropic/m", APIKey: "k"},
+		},
 	}
 
 	env := buildCmdEnv(rt, "/r", "", "")
