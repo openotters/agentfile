@@ -47,6 +47,11 @@ type agentDeps struct {
 	// WithAgentToken.
 	daemonURL  string
 	agentToken string
+	// capabilities is the list of daemon-callback tools the agent
+	// will advertise in agent.yaml's capabilities: block. Set by
+	// the daemon at create time; the docker executor just plumbs
+	// it into MaterializeOptions.
+	capabilities []string
 }
 
 // Agent is the Docker-backed implementation of executor.Agent.
@@ -126,6 +131,7 @@ func (a *Agent) Prepare(ctx context.Context) error {
 			ImageRef:      a.deps.ref.String(),
 			Mounts:        a.deps.mounts,
 			HostFS:        a.deps.hostFS,
+			Capabilities:  a.deps.capabilities,
 			// Tool binaries are addressed via the flat /opt/bins/<name>
 			// symlinks materialise stamps on the agent root; each
 			// symlink points at /opt/bin-images/<name>/<name> (where

@@ -89,6 +89,11 @@ type workspace struct {
 	// image-mount path (`/opt/bins/<name>/<name>`) instead of the
 	// disk path the system executor copies binaries to.
 	toolBinaryPath func(name string) string
+	// capabilities is the daemon-supplied list of daemon-callback
+	// tool names (job_submit, …) advertised in agent.yaml. Set via
+	// WithCapabilities; left empty when the agent isn't wired to a
+	// daemon callback channel.
+	capabilities []string
 	// symlinkBinAt, when non-nil, returns the symlink target string
 	// for each BIN tool. Materialise stamps `opt/bins/<name>` →
 	// target on the host agent root; the bind-mount surfaces those
@@ -655,16 +660,17 @@ func (w *workspace) buildRuntime(af *spec.Agentfile, id uuid.UUID, addr string) 
 	rt := &executor.Runtime{
 		Source: af,
 		ResolvedConfig: executor.ResolvedConfig{
-			ID:        id,
-			Name:      af.Agent.Name,
-			Model:     af.Agent.Model,
-			Workspace: "/workspace",
-			Configs:   configsFromSpec(af.Agent.Configs),
-			Envs:      af.Agent.Envs,
-			Mounts:    af.Agent.RuntimeMounts,
-			Context:   contextPaths(af.Agent.Contexts, len(w.mounts) > 0 || len(af.Agent.RuntimeMounts) > 0),
-			Addr:      addr,
-			Exec:      af.Agent.Exec,
+			ID:           id,
+			Name:         af.Agent.Name,
+			Model:        af.Agent.Model,
+			Workspace:    "/workspace",
+			Configs:      configsFromSpec(af.Agent.Configs),
+			Capabilities: w.capabilities,
+			Envs:         af.Agent.Envs,
+			Mounts:       af.Agent.RuntimeMounts,
+			Context:      contextPaths(af.Agent.Contexts, len(w.mounts) > 0 || len(af.Agent.RuntimeMounts) > 0),
+			Addr:         addr,
+			Exec:         af.Agent.Exec,
 		},
 	}
 

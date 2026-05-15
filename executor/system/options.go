@@ -165,6 +165,15 @@ func WithImageRef(ref string) AgentOption {
 	return func(a *Agent) { a.ws.imageRef = ref }
 }
 
+// WithCapabilities sets the list of daemon-callback capabilities
+// agent.yaml advertises (job_submit, job_wait, …). The daemon
+// supplies the list at create-time; the workspace just plumbs it
+// into ResolvedConfig.Capabilities so `otters inspect` and any
+// future capability-gating logic can read it from one place.
+func WithCapabilities(caps []string) AgentOption {
+	return func(a *Agent) { a.ws.capabilities = caps }
+}
+
 // WithStdout sets the writer for agent stdout.
 func WithStdout(w io.Writer) AgentOption {
 	return func(a *Agent) { a.proc.stdout = w }

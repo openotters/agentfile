@@ -38,10 +38,18 @@ type ResolvedConfig struct {
 	Image     *OCIRef           `yaml:"image,omitempty" json:"image,omitempty"`
 	Runtime   *RuntimeRef       `yaml:"runtime,omitempty" json:"runtime,omitempty"`
 	Configs   map[string]string `yaml:"configs,omitempty" json:"configs,omitempty"`
-	Envs      EnvKeys           `yaml:"envs,omitempty" json:"envs,omitempty"`
-	Mounts    []*spec.Mount     `yaml:"mounts,omitempty" json:"mounts,omitempty"`
-	Context   []string          `yaml:"context,omitempty" json:"context,omitempty"`
-	Tools     []ResolvedTool    `yaml:"tools,omitempty" json:"tools,omitempty"`
+	// Capabilities enumerates the daemon-callback tools the runtime
+	// is expected to expose to the model (job_submit, job_wait, …).
+	// Populated by the daemon at materialise time based on whether
+	// it's wiring an OTTERSD_URL + agent token at spawn. Purely
+	// declarative today — the runtime still gates registration on
+	// the spawn env. A future Agentfile directive will make this
+	// list operator-controllable.
+	Capabilities []string       `yaml:"capabilities,omitempty" json:"capabilities,omitempty"`
+	Envs         EnvKeys        `yaml:"envs,omitempty" json:"envs,omitempty"`
+	Mounts       []*spec.Mount  `yaml:"mounts,omitempty" json:"mounts,omitempty"`
+	Context      []string       `yaml:"context,omitempty" json:"context,omitempty"`
+	Tools        []ResolvedTool `yaml:"tools,omitempty" json:"tools,omitempty"`
 	// Exec is the operator-supplied entrypoint override (e.g. a
 	// custom runtime invocation). Lives in daemon.db; never on
 	// disk in agent.yaml.

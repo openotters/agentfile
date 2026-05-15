@@ -45,6 +45,12 @@ type MaterializeOptions struct {
 	// usr/bin and doesn't need the indirection.
 	SymlinkBinAt func(name string) (target string, ok bool)
 
+	// Capabilities is the list of daemon-callback tools the agent's
+	// runtime will register (job_submit, job_wait, …). Surfaces in
+	// agent.yaml's capabilities: block. Daemon-supplied — the
+	// agentfile library itself doesn't know which tools exist.
+	Capabilities []string
+
 	// View is the agent-visible filesystem layout used to render
 	// WORKSPACE.md. Zero-value uses system defaults derived from
 	// fs.Root() (host path, no sandbox). The docker executor sets
@@ -95,6 +101,7 @@ func MaterializeContent(
 		mounts:              opts.Mounts,
 		toolBinaryPath:      opts.ToolBinaryPath,
 		symlinkBinAt:        opts.SymlinkBinAt,
+		capabilities:        opts.Capabilities,
 		view:                opts.View,
 		viewBinDirsForTools: opts.ViewBinDirsForTools,
 		hostFS:              opts.HostFS,
