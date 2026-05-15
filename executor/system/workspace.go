@@ -196,7 +196,11 @@ func (w *workspace) materializeContent(
 		w.view.BinDirs = w.viewBinDirsForTools(names)
 	}
 
-	if e := w.writeWorkspaceContext(fs); e != nil {
+	if e := w.writeWorkspaceContext(fs, workspaceContents{
+		Context: rt.Context,
+		Tools:   rt.Tools,
+		Adds:    af.Agent.Adds,
+	}); e != nil {
 		return nil, nil, e
 	}
 
@@ -215,6 +219,17 @@ func (w *workspace) materializeContent(
 	return rt, af, nil
 }
 
+// workspaceContents bundles the per-path file listings the renderer
+// surfaces under each directory in WORKSPACE.md. All fields are
+// optional — empty slices render as "(empty)" markers under their
+// parent path, keeping the section honest about what's actually
+// installed.
+type workspaceContents struct {
+	Context []executor.ContextEntry
+	Tools   []executor.ResolvedTool
+	Adds    []*spec.Add
+}
+
 // workspaceContextMarkdown renders the body of WORKSPACE.md given the
 // real on-disk root of the agent's workspace. Kept pure so the exact
 // phrasing the LLM sees can be regression-tested without exercising
@@ -225,7 +240,7 @@ func (w *workspace) materializeContent(
 // path call this; the docker executor builds an executor.WorkspaceView
 // and routes through workspaceContextMarkdownView instead.
 func workspaceContextMarkdown(root string) []byte {
-	return workspaceContextMarkdownView(executor.WorkspaceView{Root: root})
+	return workspaceContextMarkdownView(executor.WorkspaceView{Root: root}, workspaceContents{})
 }
 
 // workspaceContextMarkdownView renders WORKSPACE.md from a
@@ -233,7 +248,7 @@ func workspaceContextMarkdown(root string) []byte {
 // based on view.Isolated. A zero-value view (empty Root, etc.) is
 // treated as "system defaults derived from the empty root" so tests
 // can exercise the no-host-line branch.
-func workspaceContextMarkdownView(view executor.WorkspaceView) []byte {
+func workspaceContextMarkdownView(view executor.WorkspaceView, content workspaceContents) []byte {
 	var b bytes.Buffer
 
 	paths := workspacePaths(view)
@@ -280,7 +295,7 @@ func workspaceContextMarkdownView(view executor.WorkspaceView) []byte {
 		}
 	}
 
-	writeLayout(&b, paths)
+	writeLayout(&b, paths, content)
 	writeRules(&b, view.Root, paths, view.Isolated)
 
 	return b.Bytes()
@@ -326,19 +341,50 @@ func workspacePaths(view executor.WorkspaceView) workspacePathSet {
 	}
 }
 
-func writeLayout(b *bytes.Buffer, p workspacePathSet) {
-	b.WriteString("Layout (full absolute paths):\n\n")
-	fmt.Fprintf(b, "- `%s/` — your system-prompt context files "+
-		"(this file lives here, alongside AGENT.md and any MOUNTS.md).\n", p.context)
-	fmt.Fprintf(b, "- `%s/` — static files baked in via `ADD` directives.\n", p.data)
+func writeLayout(b *bytes.Buffer, p workspacePathSet, content workspaceContents) {
+	b.WriteString("Layout (full file tree):\n\n")
 
-	if len(p.bins) == 1 {
-		fmt.Fprintf(b, "- `%s/` — your BIN tools "+
-			"(each BIN directive installs one binary here; the ONLY entry on $PATH).\n", p.bins[0])
+	// /etc/context — system-prompt files. Always at least
+	// AGENT.md + WORKSPACE.md when materialise ran; an empty
+	// content slice means a test/legacy caller, fall back to the
+	// short description.
+	fmt.Fprintf(b, "- `%s/` — your system-prompt context files:\n", p.context)
+	if len(content.Context) == 0 {
+		b.WriteString("    - (this file lives here, alongside AGENT.md and any MOUNTS.md)\n")
 	} else {
-		b.WriteString("- BIN tools — one directory per BIN on $PATH " +
-			"(each declared BIN is image-mounted at its own path):\n")
+		for _, c := range content.Context {
+			fmt.Fprintf(b, "    - `%s` — %s\n", filepath.Base(c.File), descOrDash(c.Description))
+		}
+	}
 
+	// /etc/data — ADD-baked static files. Show each by basename
+	// + description; "(none)" when no ADDs are declared.
+	fmt.Fprintf(b, "- `%s/` — static files baked in via `ADD` directives:\n", p.data)
+	if len(content.Adds) == 0 {
+		b.WriteString("    - (none)\n")
+	} else {
+		for _, a := range content.Adds {
+			if a == nil {
+				continue
+			}
+			fmt.Fprintf(b, "    - `%s` — %s\n", filepath.Base(a.Dst), descOrDash(a.Description))
+		}
+	}
+
+	// BIN tools — flat /opt/bins symlink dir on docker, single
+	// usr/bin/ on system. Either way one parent dir, one entry
+	// per declared BIN with its description.
+	if len(p.bins) == 1 {
+		fmt.Fprintf(b, "- `%s/` — your BIN tools (the ONLY entry on $PATH):\n", p.bins[0])
+		if len(content.Tools) == 0 {
+			b.WriteString("    - (none declared)\n")
+		} else {
+			for _, t := range content.Tools {
+				fmt.Fprintf(b, "    - `%s` — %s\n", t.Name, descOrDash(t.Description))
+			}
+		}
+	} else {
+		b.WriteString("- BIN tools — one directory per BIN on $PATH:\n")
 		for _, dir := range p.bins {
 			fmt.Fprintf(b, "    - `%s/`\n", dir)
 		}
@@ -350,6 +396,13 @@ func writeLayout(b *bytes.Buffer, p workspacePathSet) {
 		"(`~/.config`, `~/.cache`, `~/.local/share` live here).\n", p.home)
 	fmt.Fprintf(b, "- `%s/` — `$TMPDIR`; short-lived files.\n", p.tmp)
 	fmt.Fprintf(b, "- `%s/` — persistent state (the memory DB lives here).\n\n", p.varlib)
+}
+
+func descOrDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }
 
 func writeRules(b *bytes.Buffer, root string, p workspacePathSet, isolated bool) {
@@ -399,14 +452,14 @@ func (w *workspace) runtimeBinary() string {
 	return "/" + RuntimeBin
 }
 
-func (w *workspace) writeWorkspaceContext(fs billy.Filesystem) error {
+func (w *workspace) writeWorkspaceContext(fs billy.Filesystem, content workspaceContents) error {
 	view := w.view
 	if view.Root == "" {
 		view.Root = fs.Root()
 	}
 
 	return util.WriteFile(fs, filepath.Join(contextDir, "WORKSPACE.md"),
-		workspaceContextMarkdownView(view), 0o644)
+		workspaceContextMarkdownView(view, content), 0o644)
 }
 
 // applyMounts creates the symlinks declared by WithMounts inside the

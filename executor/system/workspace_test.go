@@ -54,7 +54,7 @@ func TestWorkspaceContextMarkdownView_DockerContainer(t *testing.T) {
 		RuntimeBin:   "/opt/runtime/runtime",
 		BinDirs:      []string{"/opt/bins/ping", "/opt/bins/jq"},
 		Isolated:     true,
-	}))
+	}, workspaceContents{}))
 
 	// FHS root surfaces under /agent; the user-facing scratch is
 	// the top-level /workspace bind, not /agent/workspace.
