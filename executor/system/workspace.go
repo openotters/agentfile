@@ -382,6 +382,18 @@ func (w *workspace) resolveDigest(ref string) string {
 	return w.digestResolver(ref)
 }
 
+// runtimeBinary returns the in-container path of the runtime
+// executable. Docker sets View.RuntimeBin (typically
+// /opt/runtime/runtime, where the image-mount lands). System
+// materialises the runtime under the agent root and defaults to
+// usr/local/bin/runtime.
+func (w *workspace) runtimeBinary() string {
+	if w.view.RuntimeBin != "" {
+		return w.view.RuntimeBin
+	}
+	return "/" + RuntimeBin
+}
+
 func (w *workspace) writeWorkspaceContext(fs billy.Filesystem) error {
 	view := w.view
 	if view.Root == "" {
@@ -650,7 +662,7 @@ func (w *workspace) buildRuntime(af *spec.Agentfile, id uuid.UUID, addr string) 
 			Configs:   configsFromSpec(af.Agent.Configs),
 			Envs:      af.Agent.Envs,
 			Mounts:    af.Agent.RuntimeMounts,
-			Context:   contextPathsFromSpec(af.Agent.Contexts),
+			Context:   contextPaths(af.Agent.Contexts, len(w.mounts) > 0 || len(af.Agent.RuntimeMounts) > 0),
 			Addr:      addr,
 			Exec:      af.Agent.Exec,
 		},
@@ -664,9 +676,10 @@ func (w *workspace) buildRuntime(af *spec.Agentfile, id uuid.UUID, addr string) 
 	}
 
 	if af.Agent.Runtime != "" {
-		rt.Runtime = &executor.OCIRef{
+		rt.Runtime = &executor.RuntimeRef{
 			Ref:    af.Agent.Runtime,
 			Digest: w.resolveDigest(af.Agent.Runtime),
+			Binary: w.runtimeBinary(),
 		}
 	}
 
@@ -721,12 +734,28 @@ func configsFromSpec(in []*spec.Config) map[string]string {
 	return out
 }
 
-// contextPathsFromSpec converts each CONTEXT directive into the
-// absolute (agent-root) path of the materialised .md file. The
-// runtime loads exactly this list — no more dir-scan.
-func contextPathsFromSpec(in []*spec.Context) []string {
-	out := make([]string, 0, len(in))
-	for _, c := range in {
+// contextPaths returns the full ordered list of context files the
+// runtime should load into the system prompt. Two sources:
+//
+//   - Agentfile-declared CONTEXT directives, in declaration order
+//     (the user-authored bits — SOUL.md, SCENARIOS.md, …).
+//   - Daemon-generated files materialise writes next door — AGENT.md
+//     (identity card), WORKSPACE.md (filesystem layout), and
+//     MOUNTS.md (only when user mounts exist).
+//
+// The runtime uses this list verbatim — no more dir-scan — so any
+// file the daemon writes that isn't named here gets silently
+// ignored. AGENT.md and WORKSPACE.md go first so the model reads
+// them before the spec-declared content.
+func contextPaths(specCtx []*spec.Context, hasMounts bool) []string {
+	out := []string{
+		"/" + filepath.Join(contextDir, "AGENT.md"),
+		"/" + filepath.Join(contextDir, "WORKSPACE.md"),
+	}
+	if hasMounts {
+		out = append(out, "/"+filepath.Join(contextDir, "MOUNTS.md"))
+	}
+	for _, c := range specCtx {
 		if c == nil || c.Name == "" {
 			continue
 		}

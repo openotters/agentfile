@@ -121,7 +121,7 @@ func TestAgent_RuntimeRef(t *testing.T) {
 	// Runtime OCIRef wins when set.
 	rt := &executor.Runtime{
 		ResolvedConfig: executor.ResolvedConfig{
-			Runtime: &executor.OCIRef{Ref: "ghcr.io/openotters/runtime:v1"},
+			Runtime: &executor.RuntimeRef{Ref: "ghcr.io/openotters/runtime:v1"},
 		},
 	}
 	if got := a.runtimeRef(rt); got != "ghcr.io/openotters/runtime:v1" {

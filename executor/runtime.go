@@ -36,9 +36,9 @@ type ResolvedConfig struct {
 	Model     string            `yaml:"model" json:"model"`
 	Workspace string            `yaml:"workspace,omitempty" json:"workspace,omitempty"`
 	Image     *OCIRef           `yaml:"image,omitempty" json:"image,omitempty"`
-	Runtime   *OCIRef           `yaml:"runtime,omitempty" json:"runtime,omitempty"`
+	Runtime   *RuntimeRef       `yaml:"runtime,omitempty" json:"runtime,omitempty"`
 	Configs   map[string]string `yaml:"configs,omitempty" json:"configs,omitempty"`
-	Envs      []*spec.Env       `yaml:"envs,omitempty" json:"envs,omitempty"`
+	Envs      EnvKeys           `yaml:"envs,omitempty" json:"envs,omitempty"`
 	Mounts    []*spec.Mount     `yaml:"mounts,omitempty" json:"mounts,omitempty"`
 	Context   []string          `yaml:"context,omitempty" json:"context,omitempty"`
 	Tools     []ResolvedTool    `yaml:"tools,omitempty" json:"tools,omitempty"`
@@ -52,11 +52,75 @@ type ResolvedConfig struct {
 }
 
 // OCIRef pairs an image reference with its content-addressed digest.
-// Same shape on image, runtime, and per-tool — read the same way
-// across all three.
+// Used for the agent image and per-tool refs.
 type OCIRef struct {
 	Ref    string `yaml:"ref" json:"ref"`
 	Digest string `yaml:"digest,omitempty" json:"digest,omitempty"`
+}
+
+// RuntimeRef is OCIRef plus the in-container path of the runtime
+// binary. The path is what the executor uses as the container's
+// entrypoint (e.g. `/opt/runtime/runtime` on docker) — surfacing it
+// here lets `otters inspect` answer "where does the agent's
+// runtime live?" without inferring from the executor backend.
+type RuntimeRef struct {
+	Ref    string `yaml:"ref" json:"ref"`
+	Digest string `yaml:"digest,omitempty" json:"digest,omitempty"`
+	Binary string `yaml:"binary,omitempty" json:"binary,omitempty"`
+}
+
+// EnvKeys is the disk shape for the spec's env declarations. On
+// disk it serialises as a list of bare key strings — values never
+// touch agent.yaml (the daemon hydrates them in-memory from the
+// Agentfile defaults + operator overrides in daemon.db at spawn
+// time). In-memory it remains []*spec.Env so the executor's
+// AppendUserEnv keeps working unchanged.
+type EnvKeys []*spec.Env
+
+// MarshalYAML writes the env list as `[]string` of keys — no
+// objects, no descriptions, no values. Descriptions live in the
+// Agentfile spec (and surface through `otters inspect`'s spec
+// view); the runtime-side agent.yaml only declares "this agent
+// expects these keys.".
+func (e EnvKeys) MarshalYAML() (any, error) {
+	keys := make([]string, 0, len(e))
+	for _, env := range e {
+		if env == nil || env.Key == "" {
+			continue
+		}
+		keys = append(keys, env.Key)
+	}
+	return keys, nil
+}
+
+// UnmarshalYAML accepts either the bare-string list shape (new) or
+// the legacy `[]{key, description}` list-of-objects shape so old
+// agent.yaml files still load cleanly until the next materialise
+// rewrites them.
+func (e *EnvKeys) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.SequenceNode {
+		return fmt.Errorf("envs: expected a sequence, got %v", node.Kind)
+	}
+	out := make([]*spec.Env, 0, len(node.Content))
+	for _, item := range node.Content {
+		switch item.Kind {
+		case yaml.ScalarNode:
+			out = append(out, &spec.Env{Key: item.Value})
+		case yaml.MappingNode:
+			var legacy struct {
+				Key         string `yaml:"key"`
+				Description string `yaml:"description"`
+			}
+			if err := item.Decode(&legacy); err != nil {
+				return fmt.Errorf("envs: %w", err)
+			}
+			out = append(out, &spec.Env{Key: legacy.Key, Description: legacy.Description})
+		case yaml.DocumentNode, yaml.SequenceNode, yaml.AliasNode:
+			return fmt.Errorf("envs: unsupported node kind %v", item.Kind)
+		}
+	}
+	*e = out
+	return nil
 }
 
 // ResolvedTool describes a tool binary with its resolved filesystem
