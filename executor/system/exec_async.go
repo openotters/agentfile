@@ -3,6 +3,7 @@ package system
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
@@ -152,7 +153,8 @@ func wrapResult(stdout, stderr string, waitErr error, handle string, ctxErr erro
 	if waitErr == nil {
 		return out
 	}
-	if exitErr, ok := waitErr.(*exec.ExitError); ok {
+	exitErr := &exec.ExitError{}
+	if errors.As(waitErr, &exitErr) {
 		out.ExitCode = exitErr.ExitCode()
 		// ctx-cancellation often surfaces as "signal: killed" exit;
 		// promote it to Err so callers can distinguish "BIN exited

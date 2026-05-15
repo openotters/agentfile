@@ -15,29 +15,47 @@ import (
 )
 
 // containerLayout describes the in-container paths the agent sees.
-// Matches the system executor's FHS-shaped agent root, except
-// runtime + each BIN come from image mounts at /opt/* instead of
-// being copied into /agent/usr/bin.
+// The host materialised tree (etc/context, etc/data, etc/Agentfile,
+// etc/agent.yaml, home, tmp, var/lib, workspace) is bind-mounted
+// per-FHS-subdir directly onto the container's root filesystem. The
+// agent's view of "/" IS its FHS root — no /agent prefix. Runtime
+// and BIN images mount at /opt/* as before.
 const (
-	// inContainerAgentRoot hosts the agent's FHS-shaped tree
-	// (etc/, home/, var/lib/, …). The host materialised root is
-	// bind-mounted here. Hidden under /agent/ so the user-facing
-	// CWD doesn't have a "workspace/workspace" elbow.
-	inContainerAgentRoot = "/agent"
+	// inContainerAgentRoot is the agent's FHS root inside the
+	// container — just "/". Passed as --root to the runtime.
+	inContainerAgentRoot = "/"
 
-	// inContainerWorkspace is the agent's scratch dir — its CWD,
-	// where files the agent creates land. The host's
-	// `<agent-root>/workspace/` is *also* bind-mounted here so
-	// writes show up at one stable, top-level path.
+	// inContainerWorkspace is the agent's scratch dir / CWD.
 	inContainerWorkspace = "/workspace"
+
+	// Per-FHS-subdir bind-mount targets. Each maps a top-level
+	// piece of the host agent tree onto the container's matching
+	// FHS path.
+	inContainerEtcContext = "/etc/context"
+	inContainerEtcData    = "/etc/data"
+	inContainerAgentfile  = "/etc/Agentfile"
+	inContainerAgentYAML  = "/etc/agent.yaml"
+	inContainerHome       = "/home"
+	inContainerTmp        = "/tmp"
+	inContainerVarLib     = "/var/lib"
 
 	// inContainerRuntimeDir hosts the runtime image-mount.
 	inContainerRuntimeDir = "/opt/runtime"
 
-	// inContainerBinsRoot hosts one image-mount per BIN at
-	// /opt/bins/<name>/. Each BIN image's filesystem appears
-	// inside its directory; the binary itself is whatever the
-	// image lays down (typically `/`-rooted).
+	// inContainerBinImages hosts the per-BIN image mounts —
+	// /opt/bin-images/<name>/<name>. Each BIN image's filesystem
+	// (a single binary file at /<name>) lands in its own
+	// subdirectory. Hidden from the model: PATH and tool
+	// invocations go through /opt/bins/<name> symlinks below.
+	inContainerBinImages = "/opt/bin-images"
+
+	// inContainerBinsRoot is the flat directory the model sees in
+	// PATH. Each entry is a symlink → /opt/bin-images/<name>/<name>.
+	// Materialise creates the symlinks on the host side; a
+	// bind-mount surfaces them inside the container so an `ls
+	// /opt/bins` reads as a plain list of executables instead of
+	// the doubled-up <name>/<name> path the raw image mounts
+	// would produce.
 	inContainerBinsRoot = "/opt/bins"
 
 	// inContainerDaemonSocket is the canonical in-container path
@@ -68,7 +86,10 @@ type containerSpec struct {
 	Name      string
 	BaseImage string
 
-	AgentRoot     string // host path, bind-mounted at /agent (FHS root)
+	// AgentRoot is the host path. agentFHSMounts maps each
+	// top-level subtree onto its matching standard Linux path
+	// inside the container — no /agent prefix.
+	AgentRoot     string
 	RuntimeImage  string
 	BINImages     map[string]string // name → ref
 	UserMounts    []executor.Mount
@@ -110,8 +131,9 @@ type containerSpec struct {
 
 // buildConfig assembles the moby Container.Config for the agent's
 // runtime container. The container's entrypoint is the runtime
-// binary at the image-mount path; argv is `serve --root /agent
-// --model <model> --addr 0.0.0.0:9999`.
+// binary at the image-mount path; argv is `serve --root /
+// --model <model> --addr 0.0.0.0:9999` — the agent's FHS lives
+// directly at the container's filesystem root.
 func (s *containerSpec) buildConfig() *containertypes.Config {
 	args := []string{
 		"serve",
@@ -129,9 +151,7 @@ func (s *containerSpec) buildConfig() *containertypes.Config {
 		Env:        s.buildEnv(),
 		// Spawn the runtime in /workspace — the bind-mounted scratch
 		// dir — so tool subprocesses inherit that CWD. Matches what
-		// WORKSPACE.md tells the model; the FHS tree lives under
-		// /agent/ but the user-facing CWD stays a clean top-level
-		// /workspace.
+		// WORKSPACE.md tells the model.
 		WorkingDir: inContainerWorkspace,
 		User:       "65532:65532", // distroless nonroot
 		ExposedPorts: networktypes.PortSet{
@@ -147,37 +167,19 @@ func (s *containerSpec) buildConfig() *containertypes.Config {
 // the agent root, image-mount runtime + BINs, publish the gRPC
 // port, configure network access.
 func (s *containerSpec) buildHostConfig() *containertypes.HostConfig {
-	mounts := []mounttypes.Mount{
-		// FHS tree (etc/, usr/, home/, tmp/, var/, workspace/)
-		// hidden at /agent. The runtime reads its config from
-		// here via --root /agent.
-		{
-			Type:   mounttypes.TypeBind,
-			Source: s.AgentRoot,
-			Target: inContainerAgentRoot,
-		},
-		// Scratch dir bind-mounted at /workspace — the agent's
-		// CWD. Same host data as /agent/workspace; surfacing it at
-		// a clean top-level path is purely for the model's mental
-		// model.
-		{
-			Type:   mounttypes.TypeBind,
-			Source: filepath.Join(s.AgentRoot, "workspace"),
-			Target: inContainerWorkspace,
-		},
-		{
-			Type:     mounttypes.TypeImage,
-			Source:   s.RuntimeImage,
-			Target:   inContainerRuntimeDir,
-			ReadOnly: true,
-		},
-	}
+	mounts := agentFHSMounts(s.AgentRoot)
+	mounts = append(mounts, mounttypes.Mount{
+		Type:     mounttypes.TypeImage,
+		Source:   s.RuntimeImage,
+		Target:   inContainerRuntimeDir,
+		ReadOnly: true,
+	})
 
 	for name, ref := range s.BINImages {
 		mounts = append(mounts, mounttypes.Mount{
 			Type:     mounttypes.TypeImage,
 			Source:   ref,
-			Target:   inContainerBinsRoot + "/" + name,
+			Target:   inContainerBinImages + "/" + name,
 			ReadOnly: true,
 		})
 	}
@@ -309,4 +311,37 @@ func (s *containerSpec) buildEnv() []string {
 	env, _ = executor.AppendUserEnv(env, s.UserEnvs)
 
 	return env
+}
+
+// agentFHSMounts builds the per-subdir bind-mount list that maps
+// the host's materialised agent tree onto the container's FHS root.
+// Each entry below corresponds to one top-level piece of the host
+// agent layout being surfaced at its standard Linux path inside the
+// container — no /agent prefix, no host path visible to the model.
+// The four /etc entries are mounted individually rather than mounting
+// the whole /etc dir so distroless's /etc/passwd / /etc/group /
+// /etc/ssl/certs stay intact (nonroot user resolution + HTTPS).
+func agentFHSMounts(agentRoot string) []mounttypes.Mount {
+	return []mounttypes.Mount{
+		{Type: mounttypes.TypeBind, Source: filepath.Join(agentRoot, "etc", "context"), Target: inContainerEtcContext},
+		{Type: mounttypes.TypeBind, Source: filepath.Join(agentRoot, "etc", "data"), Target: inContainerEtcData},
+		{Type: mounttypes.TypeBind, Source: filepath.Join(agentRoot, "etc", "Agentfile"), Target: inContainerAgentfile},
+		{Type: mounttypes.TypeBind, Source: filepath.Join(agentRoot, "etc", "agent.yaml"), Target: inContainerAgentYAML},
+		{Type: mounttypes.TypeBind, Source: filepath.Join(agentRoot, "home"), Target: inContainerHome},
+		{Type: mounttypes.TypeBind, Source: filepath.Join(agentRoot, "tmp"), Target: inContainerTmp},
+		{Type: mounttypes.TypeBind, Source: filepath.Join(agentRoot, "var", "lib"), Target: inContainerVarLib},
+		{Type: mounttypes.TypeBind, Source: filepath.Join(agentRoot, "workspace"), Target: inContainerWorkspace},
+		// /opt/bins on the host carries per-BIN symlinks created by
+		// materialise. Each symlink's target string points at
+		// /opt/bin-images/<name>/<name> — a container-local path that
+		// resolves at access time (the image mounts above land there).
+		// Bind-mounting the host symlink dir keeps the model's view
+		// flat: `/opt/bins/yaegi` IS the binary, not a wrapper dir.
+		{
+			Type:     mounttypes.TypeBind,
+			Source:   filepath.Join(agentRoot, "opt", "bins"),
+			Target:   inContainerBinsRoot,
+			ReadOnly: true,
+		},
+	}
 }

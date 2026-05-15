@@ -51,6 +51,13 @@ var (
 		filepath.Join("home", ".config"),
 		filepath.Join("home", ".cache"),
 		filepath.Join("home", ".local", "share"),
+		// opt/bins/ holds per-BIN symlinks for the docker executor —
+		// each is a string-target symlink pointing into the
+		// container-only /opt/bin-images mount. Created here so the
+		// bind-mount destination exists; the symlinks themselves get
+		// stamped by stampBinSymlinks (called only by the docker
+		// executor's materialise path).
+		filepath.Join("opt", "bins"),
 	}
 )
 
@@ -82,6 +89,13 @@ type workspace struct {
 	// image-mount path (`/opt/bins/<name>/<name>`) instead of the
 	// disk path the system executor copies binaries to.
 	toolBinaryPath func(name string) string
+	// symlinkBinAt, when non-nil, returns the symlink target string
+	// for each BIN tool. Materialise stamps `opt/bins/<name>` →
+	// target on the host agent root; the bind-mount surfaces those
+	// symlinks at `/opt/bins/` inside the container. Docker uses
+	// this so PATH stays flat (`/opt/bins/<name>` IS the executable)
+	// while image mounts live hidden under /opt/bin-images.
+	symlinkBinAt func(name string) (target string, ok bool)
 	// view is the agent-visible filesystem layout used to render
 	// WORKSPACE.md. Zero-value means "system defaults derived from
 	// fs.Root()". The docker executor sets a container-rooted view
@@ -185,6 +199,10 @@ func (w *workspace) materializeContent(
 		return nil, nil, e
 	}
 
+	if e := w.stampBinSymlinks(fs, af); e != nil {
+		return nil, nil, e
+	}
+
 	if e := w.installToolDocs(ctx, fs, af); e != nil {
 		return nil, nil, e
 	}
@@ -237,10 +255,18 @@ func workspaceContextMarkdownView(view executor.WorkspaceView) []byte {
 	if view.Root != "" {
 		switch {
 		case view.Isolated:
-			fmt.Fprintf(&b, "Your workspace inside the container: `%s`\n\n", view.Root)
-			b.WriteString("**Every path below is the path you see from inside the container, not the host.** ")
-			b.WriteString("Use these paths verbatim in tool calls; the host directory is bind-mounted ")
-			b.WriteString("here so writes inside this tree show up on the host automatically.\n\n")
+			if view.Root == "/" {
+				b.WriteString("Your filesystem is a standard Linux FHS rooted at `/`. ")
+				b.WriteString("Each top-level subtree is bind-mounted from the host directly onto the ")
+				b.WriteString("matching FHS path — `/etc/context`, `/home`, `/tmp`, `/var/lib`, ")
+				b.WriteString("`/workspace`. The host directory is invisible from inside; writes you ")
+				b.WriteString("make under these paths show up on the host automatically.\n\n")
+			} else {
+				fmt.Fprintf(&b, "Your workspace inside the container: `%s`\n\n", view.Root)
+				b.WriteString("**Every path below is the path you see from inside the container, not the host.** ")
+				b.WriteString("Use these paths verbatim in tool calls; the host directory is bind-mounted ")
+				b.WriteString("here so writes inside this tree show up on the host automatically.\n\n")
+			}
 		default:
 			fmt.Fprintf(&b, "Your workspace on the host: `%s`\n\n", view.Root)
 			b.WriteString("**There is no chroot.** Every path below is a real, absolute path on the host. ")
@@ -409,6 +435,45 @@ func (w *workspace) applyMounts(fs billy.Filesystem) error {
 	}
 
 	return w.writeMountsContext(fs)
+}
+
+// stampBinSymlinks creates one symlink per declared BIN at
+// <agent-root>/opt/bins/<name>. The target string is whatever the
+// caller's symlinkBinAt hook returns — typically a container-local
+// path like /opt/bin-images/<name>/<name> that resolves at access
+// time inside the agent's container. No-op when the caller doesn't
+// supply the hook (the system executor installs BIN binaries as
+// regular files under usr/bin and doesn't need the indirection).
+func (w *workspace) stampBinSymlinks(fs billy.Filesystem, af *spec.Agentfile) error {
+	if w.symlinkBinAt == nil || af.Agent == nil {
+		return nil
+	}
+
+	root := fs.Root()
+	if root == "" {
+		return fmt.Errorf("bin symlinks require a filesystem with a real root directory")
+	}
+
+	binsDir := filepath.Join(root, "opt", "bins")
+	if err := w.hostFS.MkdirAll(binsDir, 0o755); err != nil {
+		return fmt.Errorf("opt/bins: %w", err)
+	}
+
+	for _, t := range af.Agent.Bins {
+		target, ok := w.symlinkBinAt(t.Name)
+		if !ok || target == "" {
+			continue
+		}
+
+		link := filepath.Join(binsDir, t.Name)
+		_ = w.hostFS.Remove(link)
+
+		if err := w.hostFS.Symlink(target, link); err != nil {
+			return fmt.Errorf("symlink %s -> %s: %w", link, target, err)
+		}
+	}
+
+	return nil
 }
 
 // mountsContextMarkdown renders the body of MOUNTS.md for a given set

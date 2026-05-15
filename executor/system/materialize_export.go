@@ -31,10 +31,19 @@ type MaterializeOptions struct {
 	HostFS         billy.Filesystem
 	// ToolBinaryPath optionally returns an absolute in-container
 	// path for tool `name`. The docker executor returns
-	// `/opt/bins/<name>/<name>` so the runtime resolves the binary
-	// against the read-only image-mount instead of the bind-mounted
-	// agent root (which doesn't carry the binary on disk).
+	// `/opt/bins/<name>` so the runtime resolves the symlink
+	// stamped on the agent root (which the kernel then follows to
+	// the read-only image-mount, hidden under /opt/bin-images).
 	ToolBinaryPath func(name string) string
+
+	// SymlinkBinAt, when non-nil, is invoked once per declared BIN
+	// with (name, target) — name is the BIN's tool name (resolves
+	// to opt/bins/<name> on the agent root), target is the
+	// container-local string the symlink should point at (e.g.
+	// /opt/bin-images/<name>/<name>). Only the docker executor sets
+	// this; system installs the binary as a regular file under
+	// usr/bin and doesn't need the indirection.
+	SymlinkBinAt func(name string) (target string, ok bool)
 
 	// View is the agent-visible filesystem layout used to render
 	// WORKSPACE.md. Zero-value uses system defaults derived from
@@ -85,6 +94,7 @@ func MaterializeContent(
 		localRuntime:        opts.LocalRuntime,
 		mounts:              opts.Mounts,
 		toolBinaryPath:      opts.ToolBinaryPath,
+		symlinkBinAt:        opts.SymlinkBinAt,
 		view:                opts.View,
 		viewBinDirsForTools: opts.ViewBinDirsForTools,
 		hostFS:              opts.HostFS,

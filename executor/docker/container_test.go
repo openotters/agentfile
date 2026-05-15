@@ -35,9 +35,11 @@ func TestContainerSpec_BuildConfig(t *testing.T) {
 	if cfg.User != "65532:65532" {
 		t.Errorf("User = %q, want 65532:65532", cfg.User)
 	}
-	// Cmd should pass --root /agent --addr 0.0.0.0:9999
+	// Cmd should pass --root / --addr 0.0.0.0:9999. The agent's
+	// FHS lives directly at the container's filesystem root; no
+	// /agent prefix.
 	joined := strings.Join(cfg.Cmd, " ")
-	if !strings.Contains(joined, "--root /agent") || !strings.Contains(joined, "--addr 0.0.0.0:9999") {
+	if !strings.Contains(joined, "--root /") || !strings.Contains(joined, "--addr 0.0.0.0:9999") {
 		t.Errorf("Cmd %q missing root/addr flags", joined)
 	}
 	// Env should contain the provider-prefixed key.
@@ -135,11 +137,24 @@ func TestContainerSpec_BuildHostConfig(t *testing.T) {
 	}
 
 	wants := map[string]string{
-		"/agent":         "bind:/host/path/agent-root",
-		"/workspace":     "bind:/host/path/agent-root/workspace",
-		"/opt/runtime":   "image:ghcr.io/openotters/runtime:latest",
-		"/opt/bins/ping": "image:ghcr.io/openotters/tools/ping:latest",
-		"/data":          "bind:/host/data",
+		// Per-FHS-subdir mounts: each top-level piece of the host
+		// agent tree surfaces at its standard Linux path. No /agent
+		// prefix.
+		"/etc/context":         "bind:/host/path/agent-root/etc/context",
+		"/etc/data":            "bind:/host/path/agent-root/etc/data",
+		"/etc/Agentfile":       "bind:/host/path/agent-root/etc/Agentfile",
+		"/etc/agent.yaml":      "bind:/host/path/agent-root/etc/agent.yaml",
+		"/home":                "bind:/host/path/agent-root/home",
+		"/tmp":                 "bind:/host/path/agent-root/tmp",
+		"/var/lib":             "bind:/host/path/agent-root/var/lib",
+		"/workspace":           "bind:/host/path/agent-root/workspace",
+		"/opt/runtime":         "image:ghcr.io/openotters/runtime:latest",
+		"/opt/bin-images/ping": "image:ghcr.io/openotters/tools/ping:latest",
+		// Per-BIN symlinks live on the host under <root>/opt/bins
+		// and surface here as a read-only bind. Each entry inside
+		// is a string-target symlink to /opt/bin-images/<name>/<name>.
+		"/opt/bins": "bind:/host/path/agent-root/opt/bins",
+		"/data":     "bind:/host/data",
 	}
 
 	for tgt, want := range wants {

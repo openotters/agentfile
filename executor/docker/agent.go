@@ -126,12 +126,22 @@ func (a *Agent) Prepare(ctx context.Context) error {
 			ImageRef:      a.deps.ref.String(),
 			Mounts:        a.deps.mounts,
 			HostFS:        a.deps.hostFS,
-			// Tool binaries live at the image-mount path inside
-			// the container — the runtime never sees the bind-
-			// mounted /workspace's usr/bin/, which is empty for
-			// the docker executor.
+			// Tool binaries are addressed via the flat /opt/bins/<name>
+			// symlinks materialise stamps on the agent root; each
+			// symlink points at /opt/bin-images/<name>/<name> (where
+			// the image mounts land). The runtime resolves the
+			// symlink at exec time — clean PATH, no nested
+			// <name>/<name> elbow.
 			ToolBinaryPath: func(name string) string {
-				return inContainerBinsRoot + "/" + name + "/" + name
+				return inContainerBinsRoot + "/" + name
+			},
+			// Each BIN tool's symlink at <agent-root>/opt/bins/<name>
+			// points at the in-container path the image-mount lands
+			// at — /opt/bin-images/<name>/<name>. Stored as a string;
+			// the kernel follows it inside the container at access
+			// time.
+			SymlinkBinAt: func(name string) (string, bool) {
+				return inContainerBinImages + "/" + name + "/" + name, true
 			},
 			// WORKSPACE.md is rendered from the agent's container
 			// view: Root = /agent (FHS bind target), WorkspaceDir
@@ -146,13 +156,10 @@ func (a *Agent) Prepare(ctx context.Context) error {
 				RuntimeBin:   inContainerRuntimeDir + "/runtime",
 				Isolated:     true,
 			},
-			ViewBinDirsForTools: func(names []string) []string {
-				dirs := make([]string, 0, len(names))
-				for _, n := range names {
-					dirs = append(dirs, inContainerBinsRoot+"/"+n)
-				}
-
-				return dirs
+			ViewBinDirsForTools: func(_ []string) []string {
+				// All tools land as symlinks in a single flat
+				// directory; PATH points at that one dir.
+				return []string{inContainerBinsRoot}
 			},
 		},
 	)

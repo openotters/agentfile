@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -318,10 +317,10 @@ func (a *Agent) buildExecContainer(
 		bins[t.Name] = t.Ref
 	}
 
-	binDirs := make([]string, 0, len(bins))
-	for name := range bins {
-		binDirs = append(binDirs, inContainerBinsRoot+"/"+name)
-	}
+	// Flat PATH — every BIN tool resolves through a symlink in
+	// /opt/bins/<name>, surfaced from the agent root via bind mount.
+	// Same shape the runtime container sees.
+	binDirs := []string{inContainerBinsRoot}
 
 	// Rewrite the daemon URL to the in-container form when bind-
 	// mounting the socket (same shape as containerSpec.buildEnv).
@@ -372,18 +371,7 @@ func (a *Agent) buildExecContainer(
 		AttachStderr: false,
 	}
 
-	mounts := []mounttypes.Mount{
-		{
-			Type:   mounttypes.TypeBind,
-			Source: a.deps.fs.Root(),
-			Target: inContainerAgentRoot,
-		},
-		{
-			Type:   mounttypes.TypeBind,
-			Source: filepath.Join(a.deps.fs.Root(), "workspace"),
-			Target: inContainerWorkspace,
-		},
-	}
+	mounts := agentFHSMounts(a.deps.fs.Root())
 
 	runtimeRef := a.runtimeRef(rt)
 	if runtimeRef != "" {
@@ -399,7 +387,7 @@ func (a *Agent) buildExecContainer(
 		mounts = append(mounts, mounttypes.Mount{
 			Type:     mounttypes.TypeImage,
 			Source:   ref,
-			Target:   inContainerBinsRoot + "/" + name,
+			Target:   inContainerBinImages + "/" + name,
 			ReadOnly: true,
 		})
 	}
