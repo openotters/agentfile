@@ -27,7 +27,7 @@ func TestGenerateAgentMD(t *testing.T) {
 		},
 	}}
 
-	md := spec.GenerateAgentMD(af)
+	md := spec.GenerateAgentMD(af, nil)
 
 	// Header comes from Agent.Name.
 	if !strings.HasPrefix(md, "# meteo\n") {
@@ -74,7 +74,7 @@ func TestGenerateAgentMD_Minimal(t *testing.T) {
 	// containing an explicit "no tools available" rule. Empty BINs
 	// would otherwise let the model fall back on training-data shell
 	// utilities (`ls`, `cat`, …) and pretend to invoke them.
-	md := spec.GenerateAgentMD(&spec.Agentfile{Agent: &spec.Agent{Name: "blank"}})
+	md := spec.GenerateAgentMD(&spec.Agentfile{Agent: &spec.Agent{Name: "blank"}}, nil)
 
 	if !strings.HasPrefix(md, "# blank\n") {
 		t.Fatalf("missing header:\n%s", md)
@@ -104,24 +104,29 @@ func TestGenerateAgentMD_Minimal(t *testing.T) {
 func TestGenerateAgentMD_DeclaresCapabilities(t *testing.T) {
 	t.Parallel()
 
-	// Every AGENT.md must enumerate the positive capabilities the
-	// runtime actually has. The motivating bug: models reply "yaegi
-	// is a sandbox with no network access" — a hallucinated
-	// constraint — when the docker container in fact has full
-	// egress. The Capabilities section is the runtime's ground
-	// truth; this test pins the load-bearing facts so a refactor
-	// can't silently drop one and re-open the bug.
-	md := spec.GenerateAgentMD(&spec.Agentfile{Agent: &spec.Agent{Name: "any"}})
+	// Every AGENT.md with a non-empty capabilities list must render
+	// the runtime tools by name with their descriptions. The
+	// motivating bug: models reliably hallucinate either missing
+	// tools they actually have or invent ones they don't. The
+	// Capabilities section is the runtime's ground truth — a name
+	// here is callable, a name absent is not. This test pins the
+	// load-bearing facts so a refactor can't silently drop one and
+	// re-open the hallucination class.
+	caps := []spec.Capability{
+		{Name: "job_submit", Description: "Submit a BIN as an async job."},
+		{Name: "context_show", Description: "Show the content of one context file."},
+	}
+	md := spec.GenerateAgentMD(&spec.Agentfile{Agent: &spec.Agent{Name: "any"}}, caps)
 
 	for _, needle := range []string{
 		"## Capabilities",
-		"Outbound network",
-		"Persistent memory",
-		"Async jobs",
-		"Persistent workspace",
+		"`job_submit`",
+		"Submit a BIN as an async job",
+		"`context_show`",
+		"Show the content of one context file",
 		// Anti-hallucination phrasing — without this the section
 		// reads as a brochure, not a directive.
-		"Do not tell the operator a capability is missing",
+		"a name here is callable, a name absent is not",
 	} {
 		if !strings.Contains(md, needle) {
 			t.Fatalf("missing capability phrase %q in output:\n%s", needle, md)
@@ -141,7 +146,7 @@ func TestGenerateAgentMD_EnforcesAllowlistRule(t *testing.T) {
 	md := spec.GenerateAgentMD(&spec.Agentfile{Agent: &spec.Agent{
 		Name: "demo",
 		Bins: []*spec.Bin{{Name: "jq"}},
-	}})
+	}}, nil)
 
 	for _, needle := range []string{
 		"ONLY binaries you may invoke",

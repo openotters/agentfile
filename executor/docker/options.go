@@ -96,10 +96,10 @@ func WithAgentToken(token string) AgentOption {
 	return func(d *agentDeps) { d.agentToken = token }
 }
 
-// WithCapabilities sets the list of daemon-callback tools the agent
-// advertises in agent.yaml's capabilities: block. The daemon
-// decides the list (it knows which RPCs the runtime can dial back
-// to); the docker executor just plumbs it to MaterializeOptions.
-func WithCapabilities(caps []string) AgentOption {
+// WithCapabilities sets the list of LLM-facing tool functions the
+// runtime image registers, with descriptions. The daemon decides
+// the list (it knows which capabilities the runtime is built
+// with); the docker executor just plumbs it to MaterializeOptions.
+func WithCapabilities(caps []executor.Capability) AgentOption {
 	return func(d *agentDeps) { d.capabilities = caps }
 }

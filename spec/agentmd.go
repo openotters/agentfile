@@ -7,7 +7,12 @@ import (
 )
 
 // GenerateAgentMD generates markdown documentation from an Agentfile.
-func GenerateAgentMD(af *Agentfile) string {
+// caps is the list of LLM-facing tool functions the runtime image
+// registers (daemon-supplied; the Agentfile itself doesn't declare
+// them today). Each entry's description shows up in the "Capabilities"
+// section so the model can read what each tool does without invoking
+// it.
+func GenerateAgentMD(af *Agentfile, caps []Capability) string {
 	a := af.Agent
 	var b strings.Builder
 
@@ -53,7 +58,7 @@ func GenerateAgentMD(af *Agentfile) string {
 		b.WriteByte('\n')
 	}
 
-	writeCapabilitiesSection(&b)
+	writeCapabilitiesSection(&b, caps)
 
 	b.WriteString("## Filesystem\n\n")
 	b.WriteString("| Path | Access |\n")
@@ -65,43 +70,35 @@ func GenerateAgentMD(af *Agentfile) string {
 	return b.String()
 }
 
-// writeCapabilitiesSection enumerates the positive facts about what
-// this runtime can actually do. The motivating bug: models with no
-// authoritative capability info routinely *invent* constraints
-// ("yaegi is a sandbox with no network access") that don't exist.
-// Negative-only documentation (the Binaries allowlist above) keeps
-// the model from hallucinating tools but does nothing to stop it
-// from hallucinating *missing* capabilities. This block is the
-// counterpart: a short list of things the runtime DOES support, with
-// "do not contradict this" phrasing so the model treats the list as
-// ground truth rather than a starting hypothesis.
+// writeCapabilitiesSection enumerates the LLM-facing tool functions
+// the runtime image registers (each carries its own description). The
+// model treats this list as ground truth: any tool name here is
+// callable, any name absent is not. Empty list → no section.
 //
-// Every capability listed here holds for both executor backends
-// (system + docker) as of the runtime this AGENT.md was written for.
-// If a future backend disables one of these (e.g. an air-gapped
-// network-disabled mode), it should be declared per-agent via an
-// Agentfile-level knob; today the runtime is uniform so the block
-// is unconditional.
-func writeCapabilitiesSection(b *strings.Builder) {
+// The motivating bug: models with no authoritative capability info
+// routinely *invent* tools that don't exist or claim missing
+// capabilities they actually have. This block is the positive
+// counterpart to the Binaries allowlist — both together rule out
+// hallucinated tools and hallucinated absences.
+func writeCapabilitiesSection(b *strings.Builder, caps []Capability) {
+	if len(caps) == 0 {
+		return
+	}
+
 	b.WriteString("## Capabilities\n\n")
-	b.WriteString("These capabilities are **available** to you. ")
-	b.WriteString("Do not tell the operator a capability is missing unless it is explicitly absent ")
-	b.WriteString("from this list — assume *yes* by default for anything enumerated here, and treat ")
-	b.WriteString("absence as a real constraint only when nothing here covers it.\n\n")
+	b.WriteString("These tool functions are **callable** by you. ")
+	b.WriteString("Each is registered by the runtime itself (not by an Agentfile BIN directive). ")
+	b.WriteString("Treat the list as ground truth: a name here is callable, a name absent is not.\n\n")
 
-	b.WriteString("- **Outbound network** — full HTTP / HTTPS / arbitrary-TCP egress to the public internet. ")
-	b.WriteString("Tools that fetch URLs, hit APIs, or open sockets work; no proxy interception, no allowlist. ")
-	b.WriteString("(Inbound network is not exposed — you can call out, others cannot call in.)\n")
-	b.WriteString("- **Persistent memory** — your conversation history survives session resumption and ")
-	b.WriteString("daemon restarts; treat earlier turns as durable, not in-RAM.\n")
-	b.WriteString("- **Async jobs** — `job_submit` / `job_wait` / `job_status` / `job_cancel` are wired ")
-	b.WriteString("when the daemon URL + token are present in your env. Long-running BIN invocations ")
-	b.WriteString("(builds, deploys, queries) should go through these rather than blocking inline ")
-	b.WriteString("on a synchronous tool call.\n")
-	b.WriteString("- **Persistent workspace** — `workspace/` and `var/lib/` survive across runs of this ")
-	b.WriteString("agent; `tmp/` is wiped each restart. Use the persistent paths for state you want back.\n")
+	for _, c := range caps {
+		desc := c.Description
+		if desc == "" {
+			desc = "-"
+		}
+		fmt.Fprintf(b, "- **`%s`** — %s\n", c.Name, desc)
+	}
+
 	b.WriteString("\n")
-
 	b.WriteString("If a request needs a capability *not* in this list, say so plainly and stop — ")
 	b.WriteString("the same rule as for missing binaries. Do not assume something is missing without ")
 	b.WriteString("checking this list first.\n\n")

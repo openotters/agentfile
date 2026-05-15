@@ -85,6 +85,18 @@ type Env struct {
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 }
 
+// Capability declares one LLM-facing tool function the runtime
+// image registers (e.g. `job_submit`, `context_show`). NOT part of
+// the Agentfile spec itself — the runtime image owns the list; the
+// daemon supplies it at materialise time and the agentfile library
+// just plumbs it into ResolvedConfig.Capabilities + AGENT.md. Put
+// here so renderers in spec/ can format it without an import cycle
+// on executor/.
+type Capability struct {
+	Name        string `yaml:"name" json:"name"`
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+}
+
 type Add struct {
 	Src         string `json:"src"`
 	Dst         string `json:"dst"`

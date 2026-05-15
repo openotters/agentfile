@@ -93,7 +93,7 @@ type workspace struct {
 	// tool names (job_submit, …) advertised in agent.yaml. Set via
 	// WithCapabilities; left empty when the agent isn't wired to a
 	// daemon callback channel.
-	capabilities []string
+	capabilities []executor.Capability
 	// symlinkBinAt, when non-nil, returns the symlink target string
 	// for each BIN tool. Materialise stamps `opt/bins/<name>` →
 	// target on the host agent root; the bind-mount surfaces those
@@ -170,7 +170,7 @@ func (w *workspace) materializeContent(
 		return nil, nil, e
 	}
 
-	agentMD := spec.GenerateAgentMD(af)
+	agentMD := spec.GenerateAgentMD(af, w.capabilities)
 	if e := util.WriteFile(fs, filepath.Join(contextDir, "AGENT.md"), []byte(agentMD), 0o644); e != nil {
 		return nil, nil, fmt.Errorf("writing AGENT.md: %w", e)
 	}
@@ -668,7 +668,7 @@ func (w *workspace) buildRuntime(af *spec.Agentfile, id uuid.UUID, addr string) 
 			Capabilities: w.capabilities,
 			Envs:         af.Agent.Envs,
 			Mounts:       af.Agent.RuntimeMounts,
-			Context:      contextPaths(af.Agent.Contexts, len(w.mounts) > 0 || len(af.Agent.RuntimeMounts) > 0),
+			Context:      contextEntries(af.Agent.Contexts, len(w.mounts) > 0 || len(af.Agent.RuntimeMounts) > 0),
 			Addr:         addr,
 			Exec:         af.Agent.Exec,
 		},
@@ -740,32 +740,51 @@ func configsFromSpec(in []*spec.Config) map[string]string {
 	return out
 }
 
-// contextPaths returns the full ordered list of context files the
-// runtime should load into the system prompt. Two sources:
+// contextEntries returns the ordered list of context files the
+// runtime loads into the system prompt, each carrying a name,
+// file path, and description. Two sources:
 //
-//   - Agentfile-declared CONTEXT directives, in declaration order
-//     (the user-authored bits — SOUL.md, SCENARIOS.md, …).
 //   - Daemon-generated files materialise writes next door — AGENT.md
 //     (identity card), WORKSPACE.md (filesystem layout), and
-//     MOUNTS.md (only when user mounts exist).
+//     MOUNTS.md (only when mounts exist). Daemon supplies their
+//     descriptions; they go first so the model reads them before
+//     the spec-declared content.
+//   - Agentfile-declared CONTEXT directives, in declaration order
+//     (SOUL, SCENARIOS, …). Description comes from the directive.
 //
-// The runtime uses this list verbatim — no more dir-scan — so any
-// file the daemon writes that isn't named here gets silently
-// ignored. AGENT.md and WORKSPACE.md go first so the model reads
-// them before the spec-declared content.
-func contextPaths(specCtx []*spec.Context, hasMounts bool) []string {
-	out := []string{
-		"/" + filepath.Join(contextDir, "AGENT.md"),
-		"/" + filepath.Join(contextDir, "WORKSPACE.md"),
+// The runtime uses this list verbatim — no dir-scan, no
+// Agentfile re-parse. The Name handle drives the context_show
+// introspection tool: `context_show SOUL` looks up the matching
+// entry and reads its File.
+func contextEntries(specCtx []*spec.Context, hasMounts bool) []executor.ContextEntry {
+	out := []executor.ContextEntry{
+		{
+			Name:        "AGENT",
+			File:        "/" + filepath.Join(contextDir, "AGENT.md"),
+			Description: "Auto-generated identity card — declared bins, environment, capabilities.",
+		},
+		{
+			Name:        "WORKSPACE",
+			File:        "/" + filepath.Join(contextDir, "WORKSPACE.md"),
+			Description: "Filesystem layout — where each path lives and what's writable.",
+		},
 	}
 	if hasMounts {
-		out = append(out, "/"+filepath.Join(contextDir, "MOUNTS.md"))
+		out = append(out, executor.ContextEntry{
+			Name:        "MOUNTS",
+			File:        "/" + filepath.Join(contextDir, "MOUNTS.md"),
+			Description: "Operator-supplied bind mounts — host paths surfaced into the agent tree.",
+		})
 	}
 	for _, c := range specCtx {
 		if c == nil || c.Name == "" {
 			continue
 		}
-		out = append(out, "/"+filepath.Join(contextDir, c.Name+".md"))
+		out = append(out, executor.ContextEntry{
+			Name:        c.Name,
+			File:        "/" + filepath.Join(contextDir, c.Name+".md"),
+			Description: c.Description,
+		})
 	}
 	return out
 }

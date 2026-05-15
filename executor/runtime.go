@@ -38,17 +38,16 @@ type ResolvedConfig struct {
 	Image     *OCIRef           `yaml:"image,omitempty" json:"image,omitempty"`
 	Runtime   *RuntimeRef       `yaml:"runtime,omitempty" json:"runtime,omitempty"`
 	Configs   map[string]string `yaml:"configs,omitempty" json:"configs,omitempty"`
-	// Capabilities enumerates the daemon-callback tools the runtime
-	// is expected to expose to the model (job_submit, job_wait, …).
-	// Populated by the daemon at materialise time based on whether
-	// it's wiring an OTTERSD_URL + agent token at spawn. Purely
-	// declarative today — the runtime still gates registration on
-	// the spawn env. A future Agentfile directive will make this
-	// list operator-controllable.
-	Capabilities []string       `yaml:"capabilities,omitempty" json:"capabilities,omitempty"`
-	Envs         EnvKeys        `yaml:"envs,omitempty" json:"envs,omitempty"`
+	// Capabilities enumerates the LLM-facing tool functions the
+	// runtime image registers (NOT per-BIN tools — those live in
+	// Tools). Each carries its description so the model can read
+	// what every tool does straight out of agent.yaml. Populated
+	// by the daemon at materialise time. A future Agentfile
+	// CAPABILITY directive will gate individual entries.
+	Capabilities []Capability   `yaml:"capabilities,omitempty" json:"capabilities,omitempty"`
+	Envs         []*spec.Env    `yaml:"envs,omitempty" json:"envs,omitempty"`
 	Mounts       []*spec.Mount  `yaml:"mounts,omitempty" json:"mounts,omitempty"`
-	Context      []string       `yaml:"context,omitempty" json:"context,omitempty"`
+	Context      []ContextEntry `yaml:"context,omitempty" json:"context,omitempty"`
 	Tools        []ResolvedTool `yaml:"tools,omitempty" json:"tools,omitempty"`
 	// Exec is the operator-supplied entrypoint override (e.g. a
 	// custom runtime invocation). Lives in daemon.db; never on
@@ -77,59 +76,20 @@ type RuntimeRef struct {
 	Binary string `yaml:"binary,omitempty" json:"binary,omitempty"`
 }
 
-// EnvKeys is the disk shape for the spec's env declarations. On
-// disk it serialises as a list of bare key strings — values never
-// touch agent.yaml (the daemon hydrates them in-memory from the
-// Agentfile defaults + operator overrides in daemon.db at spawn
-// time). In-memory it remains []*spec.Env so the executor's
-// AppendUserEnv keeps working unchanged.
-type EnvKeys []*spec.Env
-
-// MarshalYAML writes the env list as `[]string` of keys — no
-// objects, no descriptions, no values. Descriptions live in the
-// Agentfile spec (and surface through `otters inspect`'s spec
-// view); the runtime-side agent.yaml only declares "this agent
-// expects these keys.".
-func (e EnvKeys) MarshalYAML() (any, error) {
-	keys := make([]string, 0, len(e))
-	for _, env := range e {
-		if env == nil || env.Key == "" {
-			continue
-		}
-		keys = append(keys, env.Key)
-	}
-	return keys, nil
+// ContextEntry is one declared context file. `Name` is the short
+// handle the model uses with the runtime's context_show tool
+// (e.g. "SOUL"); `File` is the absolute (agent-root) path to the
+// materialised markdown; `Description` is a one-line summary so
+// the model knows what the file is for without reading it.
+type ContextEntry struct {
+	Name        string `yaml:"name" json:"name"`
+	File        string `yaml:"file" json:"file"`
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 }
 
-// UnmarshalYAML accepts either the bare-string list shape (new) or
-// the legacy `[]{key, description}` list-of-objects shape so old
-// agent.yaml files still load cleanly until the next materialise
-// rewrites them.
-func (e *EnvKeys) UnmarshalYAML(node *yaml.Node) error {
-	if node.Kind != yaml.SequenceNode {
-		return fmt.Errorf("envs: expected a sequence, got %v", node.Kind)
-	}
-	out := make([]*spec.Env, 0, len(node.Content))
-	for _, item := range node.Content {
-		switch item.Kind {
-		case yaml.ScalarNode:
-			out = append(out, &spec.Env{Key: item.Value})
-		case yaml.MappingNode:
-			var legacy struct {
-				Key         string `yaml:"key"`
-				Description string `yaml:"description"`
-			}
-			if err := item.Decode(&legacy); err != nil {
-				return fmt.Errorf("envs: %w", err)
-			}
-			out = append(out, &spec.Env{Key: legacy.Key, Description: legacy.Description})
-		case yaml.DocumentNode, yaml.SequenceNode, yaml.AliasNode:
-			return fmt.Errorf("envs: unsupported node kind %v", item.Kind)
-		}
-	}
-	*e = out
-	return nil
-}
+// Capability aliases spec.Capability so the executor layer can use
+// it directly without an extra conversion at API boundaries.
+type Capability = spec.Capability
 
 // ResolvedTool describes a tool binary with its resolved filesystem
 // path plus, when known, its source ref + OCI digest and the

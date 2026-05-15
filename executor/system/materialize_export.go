@@ -45,11 +45,12 @@ type MaterializeOptions struct {
 	// usr/bin and doesn't need the indirection.
 	SymlinkBinAt func(name string) (target string, ok bool)
 
-	// Capabilities is the list of daemon-callback tools the agent's
-	// runtime will register (job_submit, job_wait, …). Surfaces in
-	// agent.yaml's capabilities: block. Daemon-supplied — the
-	// agentfile library itself doesn't know which tools exist.
-	Capabilities []string
+	// Capabilities is the list of LLM-facing tool functions the
+	// runtime image registers, each with a description. Surfaces
+	// in agent.yaml's capabilities: block. Daemon-supplied — the
+	// agentfile library itself doesn't know which tools exist or
+	// what they do.
+	Capabilities []executor.Capability
 
 	// View is the agent-visible filesystem layout used to render
 	// WORKSPACE.md. Zero-value uses system defaults derived from

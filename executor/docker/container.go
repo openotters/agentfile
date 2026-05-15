@@ -280,10 +280,11 @@ func daemonAccess(daemonURL string) (string, *mounttypes.Mount, string) {
 // to /agent/home, which is where the materialised tree's home/ dir
 // actually exists inside the container.
 func (s *containerSpec) buildEnv() []string {
-	binDirs := make([]string, 0, len(s.BINImages))
-	for name := range s.BINImages {
-		binDirs = append(binDirs, inContainerBinsRoot+"/"+name)
-	}
+	// Flat PATH — every BIN tool resolves through a symlink in
+	// /opt/bins/<name>, surfaced via the agent root's bind mount.
+	// `/opt/bins/<name>` IS the executable (a symlink to
+	// /opt/bin-images/<name>/<name>), not a wrapper directory.
+	binDirs := []string{inContainerBinsRoot}
 
 	// Rewrite the daemon URL to the in-container form when we're
 	// bind-mounting the socket: the agent always dials

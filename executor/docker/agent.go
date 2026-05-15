@@ -47,11 +47,11 @@ type agentDeps struct {
 	// WithAgentToken.
 	daemonURL  string
 	agentToken string
-	// capabilities is the list of daemon-callback tools the agent
-	// will advertise in agent.yaml's capabilities: block. Set by
-	// the daemon at create time; the docker executor just plumbs
-	// it into MaterializeOptions.
-	capabilities []string
+	// capabilities is the list of LLM-facing tool functions the
+	// agent will advertise in agent.yaml's capabilities: block.
+	// Set by the daemon at create time; the docker executor just
+	// plumbs it into MaterializeOptions.
+	capabilities []executor.Capability
 }
 
 // Agent is the Docker-backed implementation of executor.Agent.

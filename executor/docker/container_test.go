@@ -93,7 +93,7 @@ func TestContainerSpec_BuildConfig_AppendsUserEnvs(t *testing.T) {
 	envHasNoKey := func(key string) {
 		t.Helper()
 		for _, e := range cfg.Env {
-			if strings.HasPrefix(e, key+"=") && e != "PATH=/opt/bins/ping" {
+			if strings.HasPrefix(e, key+"=") && e != "PATH=/opt/bins" {
 				t.Errorf("unexpected entry %q (key %s leaked from user envs)", e, key)
 			}
 		}
@@ -102,7 +102,10 @@ func TestContainerSpec_BuildConfig_AppendsUserEnvs(t *testing.T) {
 	envHas("NODE_ENV=production")
 	envHas("FEATURE_X=on")
 	// PATH from the locked-down base survives; user-declared override is filtered.
-	envHas("PATH=/opt/bins/ping")
+	// PATH is the flat /opt/bins symlink dir, not /opt/bins/<name>.
+	// Each `/opt/bins/<name>` IS the executable (a symlink to
+	// /opt/bin-images/<name>/<name>), not a wrapper directory.
+	envHas("PATH=/opt/bins")
 	envHasNoKey("OPENAI_API_KEY")
 }
 

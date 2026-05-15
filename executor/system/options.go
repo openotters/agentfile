@@ -165,12 +165,12 @@ func WithImageRef(ref string) AgentOption {
 	return func(a *Agent) { a.ws.imageRef = ref }
 }
 
-// WithCapabilities sets the list of daemon-callback capabilities
-// agent.yaml advertises (job_submit, job_wait, …). The daemon
-// supplies the list at create-time; the workspace just plumbs it
-// into ResolvedConfig.Capabilities so `otters inspect` and any
-// future capability-gating logic can read it from one place.
-func WithCapabilities(caps []string) AgentOption {
+// WithCapabilities sets the list of LLM-facing tool functions the
+// runtime image registers (job_submit, context_show, …) and their
+// descriptions. The daemon supplies the list at create-time; the
+// workspace plumbs it into ResolvedConfig.Capabilities and the
+// AGENT.md generator surfaces it in the system prompt.
+func WithCapabilities(caps []executor.Capability) AgentOption {
 	return func(a *Agent) { a.ws.capabilities = caps }
 }
 
