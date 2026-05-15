@@ -151,8 +151,32 @@ func writeBinariesSection(b *strings.Builder, bins []*Bin) {
 	}
 
 	b.WriteByte('\n')
+	writeBinaryCallingConvention(b)
 	b.WriteString("If you need a capability that isn't covered by the binaries above, ")
 	b.WriteString("**say so plainly** — tell the operator which tool would be needed and stop. ")
 	b.WriteString("Do not invent a tool call, fabricate output, or substitute a tool from the list ")
 	b.WriteString("for one that isn't there.\n\n")
+}
+
+// writeBinaryCallingConvention pins the exact JSON shape every BIN call
+// must use. The motivating bug: models occasionally emit `args` as a
+// JSON-encoded *string* (`"[\"-c\",\"echo hi\"]"`) instead of a real
+// JSON array, especially when the payload has nested quotes (jq filters,
+// shell one-liners). The runtime's typed unmarshal then rejects the
+// call with "invalid parameters" and the turn stalls.
+//
+// Showing the model both the correct and the wrong form here gives it
+// a concrete pattern to imitate. The error case has to be shown
+// verbatim — paraphrasing it ("don't stringify") doesn't suppress the
+// failure as reliably as a side-by-side example.
+func writeBinaryCallingConvention(b *strings.Builder) {
+	b.WriteString("### How to call a binary\n\n")
+	b.WriteString("Each invocation is a JSON object with two optional fields. ")
+	b.WriteString("At least one must be present.\n\n")
+	b.WriteString("- **`args`** — array of strings, forwarded as argv. ")
+	b.WriteString("Must be a real JSON array, never a JSON-encoded string.\n")
+	b.WriteString("- **`stdin`** — string piped to the binary's standard input.\n\n")
+	b.WriteString("Correct:   `{\"args\": [\"-c\", \"echo hi\"]}`\n\n")
+	b.WriteString("Incorrect: `{\"args\": \"[\\\"-c\\\",\\\"echo hi\\\"]\"}` ")
+	b.WriteString("— `args` is a stringified array; the call is rejected with `invalid parameters`.\n\n")
 }

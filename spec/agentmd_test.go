@@ -96,6 +96,14 @@ func TestGenerateAgentMD_Minimal(t *testing.T) {
 		}
 	}
 
+	// The calling-convention block lives inside the BIN list and
+	// is meaningless when no binaries are wired up — it must NOT
+	// render here. Re-emitting it with zero tools would invite the
+	// model to call something that doesn't exist.
+	if strings.Contains(md, "How to call a binary") {
+		t.Fatalf("calling-convention block leaked into zero-BIN output:\n%s", md)
+	}
+
 	if !strings.Contains(md, "## Filesystem") {
 		t.Fatalf("Filesystem block must always render:\n%s", md)
 	}
@@ -152,6 +160,18 @@ func TestGenerateAgentMD_EnforcesAllowlistRule(t *testing.T) {
 		"ONLY binaries you may invoke",
 		"no implicit Unix utilities",
 		"say so plainly",
+		// Calling-convention sub-section: explicit good/bad
+		// example for the JSON shape. Pins the failure mode
+		// where models emit `args` as a stringified array
+		// instead of a real JSON array — the side-by-side
+		// example is what suppresses the bug.
+		"How to call a binary",
+		"`args`",
+		"`stdin`",
+		"never a JSON-encoded string",
+		"{\"args\": [\"-c\", \"echo hi\"]}",
+		"{\"args\": \"[\\\"-c\\\",\\\"echo hi\\\"]\"}",
+		"invalid parameters",
 	} {
 		if !strings.Contains(md, needle) {
 			t.Fatalf("missing allowlist-rule phrase %q in output:\n%s", needle, md)
