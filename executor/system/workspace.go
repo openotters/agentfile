@@ -344,6 +344,20 @@ func workspacePaths(view executor.WorkspaceView) workspacePathSet {
 func writeLayout(b *bytes.Buffer, p workspacePathSet, content workspaceContents) {
 	b.WriteString("Layout (full file tree):\n\n")
 
+	// /etc/Agentfile and /etc/agent.yaml are sibling files of the
+	// context/ and data/ dirs. They're not loaded as context, but
+	// the model should know they exist — Agentfile is the verbatim
+	// DSL the operator wrote (read with `cat /etc/Agentfile` for
+	// the source), agent.yaml is the resolved runtime config
+	// (name, model, tools, capabilities, …).
+	etcDir := filepath.Dir(p.context)
+	fmt.Fprintf(b,
+		"- `%s/Agentfile` — the verbatim Agentfile the operator wrote; "+
+			"`cat` it to see the original directives.\n", etcDir)
+	fmt.Fprintf(b,
+		"- `%s/agent.yaml` — the resolved runtime config (name, model, "+
+			"tools, capabilities, env keys); `cat` it for the structured view.\n", etcDir)
+
 	// /etc/context — system-prompt files. Always at least
 	// AGENT.md + WORKSPACE.md when materialise ran; an empty
 	// content slice means a test/legacy caller, fall back to the
@@ -353,21 +367,35 @@ func writeLayout(b *bytes.Buffer, p workspacePathSet, content workspaceContents)
 		b.WriteString("    - (this file lives here, alongside AGENT.md and any MOUNTS.md)\n")
 	} else {
 		for _, c := range content.Context {
-			fmt.Fprintf(b, "    - `%s` — %s\n", filepath.Base(c.File), descOrDash(c.Description))
+			writeTreeEntry(b, filepath.Base(c.File), c.Description)
 		}
 	}
 
-	// /etc/data — ADD-baked static files. Show each by basename
-	// + description; "(none)" when no ADDs are declared.
-	fmt.Fprintf(b, "- `%s/` — static files baked in via `ADD` directives:\n", p.data)
-	if len(content.Adds) == 0 {
+	// /etc/data — ADD-baked static files + per-BIN USAGE.md
+	// auto-installed by the daemon at materialise. The model
+	// already has each USAGE.md folded into its tool's description
+	// (loaded at start-up), but the files exist on disk so the
+	// path is real if the model wants to re-read one.
+	fmt.Fprintf(b, "- `%s/` — static files baked in via `ADD` directives + per-BIN usage docs:\n", p.data)
+	if len(content.Adds) == 0 && !anyToolHasUsage(content.Tools) {
 		b.WriteString("    - (none)\n")
 	} else {
 		for _, a := range content.Adds {
 			if a == nil {
 				continue
 			}
-			fmt.Fprintf(b, "    - `%s` — %s\n", filepath.Base(a.Dst), descOrDash(a.Description))
+			writeTreeEntry(b, filepath.Base(a.Dst), a.Description)
+		}
+		for _, t := range content.Tools {
+			if t.Usage == "" {
+				continue
+			}
+			// Trim the /etc/data/ prefix so the entry reads as
+			// a path relative to its parent dir, matching the
+			// indentation level of the surrounding tree.
+			rel := strings.TrimPrefix(t.Usage, p.data+"/")
+			fmt.Fprintf(b, "    - `%s` — `%s` usage docs (already folded into the `%s` tool description).\n",
+				rel, t.Name, t.Name)
 		}
 	}
 
@@ -380,7 +408,7 @@ func writeLayout(b *bytes.Buffer, p workspacePathSet, content workspaceContents)
 			b.WriteString("    - (none declared)\n")
 		} else {
 			for _, t := range content.Tools {
-				fmt.Fprintf(b, "    - `%s` — %s\n", t.Name, descOrDash(t.Description))
+				writeTreeEntry(b, t.Name, t.Description)
 			}
 		}
 	} else {
@@ -398,18 +426,41 @@ func writeLayout(b *bytes.Buffer, p workspacePathSet, content workspaceContents)
 	fmt.Fprintf(b, "- `%s/` — persistent state (the memory DB lives here).\n\n", p.varlib)
 }
 
-func descOrDash(s string) string {
-	if s == "" {
-		return "-"
+// writeTreeEntry renders one child line under a parent directory in
+// the layout tree. Drops the trailing "— description" when the entry
+// has no description so the model doesn't see distracting empty
+// placeholders.
+func writeTreeEntry(b *bytes.Buffer, name, description string) {
+	if description == "" {
+		fmt.Fprintf(b, "    - `%s`\n", name)
+		return
 	}
-	return s
+	fmt.Fprintf(b, "    - `%s` — %s\n", name, description)
+}
+
+// anyToolHasUsage reports whether any tool carries a non-empty
+// Usage path. Used by writeLayout to decide whether the /etc/data
+// section has anything to list (ADD-baked file or USAGE.md).
+func anyToolHasUsage(tools []executor.ResolvedTool) bool {
+	for _, t := range tools {
+		if t.Usage != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func writeRules(b *bytes.Buffer, root string, p workspacePathSet, isolated bool) {
 	b.WriteString("Working-directory rules:\n\n")
 	fmt.Fprintf(b, "- Default CWD is `%s/`; relative paths in tool args resolve there.\n", p.workspace)
-	fmt.Fprintf(b, "- Prefer writing inside `%s/`, `%s/`, or `%s/`; treat `%s/etc/` and `%s/usr/` as read-only.\n",
-		p.workspace, p.tmp, p.home, root, root)
+	// Special-case root="/" (docker, FHS merge) so we don't get
+	// "//etc/" — the model reads "/etc/" naturally.
+	etcAbs, usrAbs := root+"/etc/", root+"/usr/"
+	if root == "/" {
+		etcAbs, usrAbs = "/etc/", "/usr/"
+	}
+	fmt.Fprintf(b, "- Prefer writing inside `%s/`, `%s/`, or `%s/`; treat `%s` and `%s` as read-only.\n",
+		p.workspace, p.tmp, p.home, etcAbs, usrAbs)
 	fmt.Fprintf(b, "- If `%s` exists, those paths are user-mounted host directories — "+
 		"the only \"outside\" paths you should explore or modify.\n", p.mounts)
 
