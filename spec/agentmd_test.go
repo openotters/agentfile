@@ -109,6 +109,60 @@ func TestGenerateAgentMD_Minimal(t *testing.T) {
 	}
 }
 
+func TestGenerateAgentMD_MemoryDiscipline_PresentWhenNoteSaveCapExists(t *testing.T) {
+	t.Parallel()
+
+	// When note_save is in the capability list, AGENT.md MUST render
+	// the Memory section that teaches the model when to use the
+	// note_* tools. Just listing the capability names doesn't tell
+	// the model WHEN to reach for them; the section pins the
+	// operating rules (save user-stated facts, pin for the current
+	// task, start with note_list, don't save transient state).
+	caps := []spec.Capability{
+		{Name: "note_save", Description: "Save a durable fact under a key."},
+		{Name: "note_list", Description: "List stored notes."},
+		{Name: "note_pin", Description: "Pin a note into the prompt."},
+	}
+	md := spec.GenerateAgentMD(&spec.Agentfile{Agent: &spec.Agent{Name: "any"}}, caps)
+
+	for _, needle := range []string{
+		"## Memory — when to save, when to read",
+		"durable memory across sessions",
+		// "Save" / "Pin" / "Start" imperatives — these are
+		// load-bearing; switching them back to "you may" /
+		// "consider" softer phrasings degrades how reliably the
+		// model picks the tool up. Test pins each.
+		"**Save**",
+		"**Pin**",
+		"Start complex tasks with `note_list`",
+		// Anti-noise rule — explicit list of things NOT to save.
+		// Without this models tend to over-save (transient state,
+		// one-off questions) and the store gets noisy.
+		"**Don't save:**",
+	} {
+		if !strings.Contains(md, needle) {
+			t.Fatalf("missing %q in output:\n%s", needle, md)
+		}
+	}
+}
+
+func TestGenerateAgentMD_MemoryDiscipline_AbsentWithoutNoteSaveCap(t *testing.T) {
+	t.Parallel()
+
+	// Runtimes that don't register the note_* tools (custom forks,
+	// alpha environments before the notes feature landed) must NOT
+	// see the Memory section — it would point at capabilities that
+	// don't exist. Gate is presence of note_save in the cap list.
+	caps := []spec.Capability{
+		{Name: "context_list", Description: "List context files."},
+	}
+	md := spec.GenerateAgentMD(&spec.Agentfile{Agent: &spec.Agent{Name: "any"}}, caps)
+
+	if strings.Contains(md, "## Memory") {
+		t.Fatalf("Memory section leaked when note_save cap is absent:\n%s", md)
+	}
+}
+
 func TestGenerateAgentMD_DeclaresCapabilities(t *testing.T) {
 	t.Parallel()
 

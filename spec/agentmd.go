@@ -59,6 +59,7 @@ func GenerateAgentMD(af *Agentfile, caps []Capability) string {
 	}
 
 	writeCapabilitiesSection(&b, caps)
+	writeMemoryDisciplineSection(&b, caps)
 
 	b.WriteString("## Filesystem\n\n")
 	b.WriteString("| Path | Access |\n")
@@ -102,6 +103,63 @@ func writeCapabilitiesSection(b *strings.Builder, caps []Capability) {
 	b.WriteString("If a request needs a capability *not* in this list, say so plainly and stop — ")
 	b.WriteString("the same rule as for missing binaries. Do not assume something is missing without ")
 	b.WriteString("checking this list first.\n\n")
+}
+
+// writeMemoryDisciplineSection emits a "Memory" block that teaches
+// the model when to use the note_* tools — gated on the presence of
+// note_save in the capability list, so runtimes without the notes
+// store don't get a section that points at tools that aren't there.
+//
+// The capabilities list lists each tool with its own description.
+// Without this companion section the model knows the tools EXIST
+// but has no rule for WHEN to use them, and tends to forget the
+// store across turns. The block below is the operating discipline:
+// what to save, when to pin, when to start a task with note_list.
+//
+// Phrasing is deliberately directive ("save", "start by") rather
+// than descriptive — models follow imperatives more reliably than
+// "you may consider saving" suggestions.
+func writeMemoryDisciplineSection(b *strings.Builder, caps []Capability) {
+	if !capsContain(caps, "note_save") {
+		return
+	}
+
+	b.WriteString("## Memory — when to save, when to read\n\n")
+	b.WriteString("The `note_*` capabilities above are your **durable memory across sessions**. ")
+	b.WriteString("Chat history is compacted and eventually drops old facts; notes don't. ")
+	b.WriteString("Use them like this:\n\n")
+
+	b.WriteString("**Save** (`note_save`) whenever the user states a fact you'll want again:\n")
+	b.WriteString("- cluster / project / environment names\n")
+	b.WriteString("- paths the user prefers (`/kubeconfig.yaml`, `~/.config/foo`)\n")
+	b.WriteString("- conventions the user expects you to follow (units, output format, naming)\n")
+	b.WriteString("- credentials *locations* (never the values — env-var name only)\n\n")
+
+	b.WriteString("**Pin** (`note_pin`) a saved note when you'll reference it on every step ")
+	b.WriteString("of the current task — a target cluster, an active project, a deployment ")
+	b.WriteString("invariant. Pinned notes flow into your system prompt as full-content blocks ")
+	b.WriteString("on every step, so you don't burn tool calls re-reading them. ")
+	b.WriteString("**Unpin** (`note_unpin`) when that task is done — keep the pinned set tight.\n\n")
+
+	b.WriteString("**Start complex tasks with `note_list`.** Before asking the user a question ")
+	b.WriteString("you might already have the answer to, scan the note list. ")
+	b.WriteString("`note_show <key>` returns the full body when a preview isn't enough.\n\n")
+
+	b.WriteString("**Don't save:** one-off context (this turn's question), transient state ")
+	b.WriteString("(a running job ID), or anything the user has explicitly retracted. ")
+	b.WriteString("`note_delete <key>` when a fact stops being true.\n\n")
+}
+
+// capsContain reports whether the supplied capability list has a
+// tool with the given name. Used by writeMemoryDisciplineSection to
+// gate the memory block on note_save presence.
+func capsContain(caps []Capability, name string) bool {
+	for _, c := range caps {
+		if c.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // writeBinariesSection emits the "Binaries" block with an explicit
