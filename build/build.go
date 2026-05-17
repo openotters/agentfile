@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/go-git/go-billy/v6"
 	"github.com/go-git/go-billy/v6/osfs"
@@ -145,6 +146,14 @@ func packManifest(
 
 	if af.Agent.Name != "" {
 		annotations[v1.AnnotationTitle] = af.Agent.Name
+	}
+
+	// Auto-stamp the OCI created annotation so every agent image
+	// carries a build timestamp without the Agentfile author having
+	// to write it. Author-supplied Agent.Labels copied above win on
+	// conflict, in case someone pins an explicit reproducible value.
+	if _, set := annotations[v1.AnnotationCreated]; !set {
+		annotations[v1.AnnotationCreated] = time.Now().UTC().Format(time.RFC3339)
 	}
 
 	manifest := v1.Manifest{

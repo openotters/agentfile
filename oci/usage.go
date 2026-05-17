@@ -14,7 +14,7 @@ import (
 
 // UsageFetcher fetches the USAGE.md body declared by a BIN image at
 // ref. Returns the empty string with a nil error when the image
-// carries no `vnd.openotters.bin.usage` annotation (or the annotation
+// carries no `io.openotters.bin.usage` annotation (or the annotation
 // references a layer that isn't present). Errors are reserved for
 // network / authentication / parse failures, so callers can treat
 // an absent doc as a no-op without distinguishing it from a real
@@ -37,7 +37,7 @@ func NoopUsageFetcher() UsageFetcher {
 // RemoteUsageFetcher mirrors RemotePuller for the documentation
 // layer: resolves ref against a real registry, parses the manifest,
 // and returns the body of the layer pointed at by the
-// `vnd.openotters.bin.usage` annotation. The annotation defaults to
+// `io.openotters.bin.usage` annotation. The annotation defaults to
 // `/USAGE.md` (see spec.DefaultUsagePath) but producers may pick a
 // different path; this fetcher honours whatever the producer wrote.
 func RemoteUsageFetcher(opts ...RemoteRepositoryOption) UsageFetcher {
@@ -67,7 +67,7 @@ func RemoteUsageFetcher(opts ...RemoteRepositoryOption) UsageFetcher {
 }
 
 // extractUsage walks the manifest looking for the layer whose
-// AnnotationTitle matches the manifest's `vnd.openotters.bin.usage`
+// AnnotationTitle matches the manifest's `io.openotters.bin.usage`
 // annotation. Both an exact title match and a basename match are
 // accepted because producers historically wrote either form.
 func extractUsage(

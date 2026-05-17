@@ -19,18 +19,36 @@ const (
 	AgentfileMediaType = "application/vnd.openotters.agentfile"
 
 	// BinArtifactType marks an OCI image as an openotters bin-tool
-	// (vnd.openotters.bin.* annotations, single binary per platform).
-	// Lets consumers distinguish tool images from agent images without
-	// relying on annotation-sniffing.
+	// (single binary per platform, io.openotters.bin.* annotations
+	// for openotters-specific metadata, OCI image-spec keys for
+	// everything covered by the spec). Lets consumers distinguish
+	// tool images from agent images without annotation-sniffing.
 	BinArtifactType = "application/vnd.openotters.bin.v1"
 
 	OctetStream = "application/octet-stream"
 	Markdown    = "text/markdown"
 
-	AnnotationBinName        = "vnd.openotters.bin.name"
-	AnnotationBinPath        = "vnd.openotters.bin.path"
-	AnnotationBinDescription = "vnd.openotters.bin.description"
-	AnnotationBinUsage       = "vnd.openotters.bin.usage"
+	// AnnotationBinName is the binary's filename inside the tar
+	// layer — what the puller looks up when extracting the bin
+	// from the rootfs. Distinct from org.opencontainers.image.title,
+	// which is the human-readable display label for the image
+	// ("jq command-line JSON processor") and may differ from the
+	// binary filename ("jq"). Reverse-DNS form per the OCI
+	// image-spec custom-key rule.
+	AnnotationBinName = "io.openotters.bin.name"
+
+	// AnnotationBinPath is the in-image absolute path the daemon
+	// binds into the agent filesystem when the bin is mounted. No
+	// OCI predefined key covers this — it's an openotters runtime
+	// concept (where the daemon mounts the binary), not image
+	// metadata an external tool would care about.
+	AnnotationBinPath = "io.openotters.bin.path"
+
+	// AnnotationBinUsage is the in-image path to a markdown file
+	// describing how the model should invoke this bin. Loaded into
+	// the agent's system prompt at run time. Distinct from
+	// org.opencontainers.image.documentation (which is a URL).
+	AnnotationBinUsage = "io.openotters.bin.usage"
 
 	DefaultBinPath   = "/"
 	DefaultUsagePath = "/USAGE.md"
