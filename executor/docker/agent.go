@@ -102,6 +102,19 @@ func (a *Agent) FailureReason() executor.FailureReason { return a.status.Failure
 // the system Agent for how the daemon supervisor uses it.
 func (a *Agent) StatusTracker() *executor.StatusTracker { return a.status }
 
+// SetAgentToken swaps the JWT injected into the container's spawn
+// env on subsequent (Re)Start calls. The currently-running
+// container is unaffected — callers stop+start the agent right
+// after to make the new token reach the runtime. Used by the
+// openotters daemon's refresh path so a re-issued token (after
+// agent_create's inbound-link or operator-driven LinkAgents)
+// actually takes effect in the runtime.
+func (a *Agent) SetAgentToken(token string) {
+	a.mu.Lock()
+	a.deps.agentToken = token
+	a.mu.Unlock()
+}
+
 // SubscribeStatus returns a channel of status transitions and a
 // cancel function.
 func (a *Agent) SubscribeStatus() (<-chan executor.Status, func()) {

@@ -103,6 +103,18 @@ func (a *Agent) SubscribeStatus() (<-chan executor.Status, func()) {
 	return a.status.Subscribe()
 }
 
+// SetAgentToken swaps the JWT injected into the runtime's spawn env
+// on subsequent Run/Start calls. The currently-running process keeps
+// its current token until restart; the openotters daemon's refresh
+// path always pairs this with a Stop+Start so the new value reaches
+// the runtime. Guarded by initMu — the same lock that serialises
+// every other read of a.agentToken via buildCmdFn.
+func (a *Agent) SetAgentToken(token string) {
+	a.initMu.Lock()
+	a.agentToken = token
+	a.initMu.Unlock()
+}
+
 // ReapplyMounts re-runs the chroot symlink step + MOUNTS.md context
 // write against the agent's existing filesystem. Used by Daemon.Restore
 // for agents loaded from disk (which skip materialize), so mounts
