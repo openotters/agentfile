@@ -170,7 +170,7 @@ func (w *workspace) materializeContent(
 		return nil, nil, e
 	}
 
-	agentMD := spec.GenerateAgentMD(af, w.capabilities)
+	agentMD := spec.GenerateAgentMD(af, id.String(), w.capabilities)
 	if e := util.WriteFile(fs, filepath.Join(contextDir, "AGENT.md"), []byte(agentMD), 0o644); e != nil {
 		return nil, nil, fmt.Errorf("writing AGENT.md: %w", e)
 	}

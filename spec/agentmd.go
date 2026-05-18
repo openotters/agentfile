@@ -12,7 +12,13 @@ import (
 // them today). Each entry's description shows up in the "Capabilities"
 // section so the model can read what each tool does without invoking
 // it.
-func GenerateAgentMD(af *Agentfile, caps []Capability) string {
+//
+// id is the agent's runtime UUID — surfaced in an "Identity" section
+// so the model can read its own id (e.g. to pass it to
+// agent_create's `links` field when spawning a callable child).
+// Empty means "skip the Identity section" — useful in tests that
+// don't care about identity.
+func GenerateAgentMD(af *Agentfile, id string, caps []Capability) string {
 	a := af.Agent
 	var b strings.Builder
 
@@ -20,6 +26,13 @@ func GenerateAgentMD(af *Agentfile, caps []Capability) string {
 
 	if desc, ok := a.Labels["description"]; ok {
 		b.WriteString(desc + "\n\n")
+	}
+
+	if id != "" {
+		b.WriteString("## Identity\n\n")
+		fmt.Fprintf(&b, "Your agent id is `%s`. Pass this string when a tool asks for your "+
+			"own ref (for example, `agent_create({\"links\":[\"%s\"]})` to spawn a "+
+			"child you can call back).\n\n", id, id)
 	}
 
 	writeBinariesSection(&b, a.Bins)

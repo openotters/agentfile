@@ -27,7 +27,7 @@ func TestGenerateAgentMD(t *testing.T) {
 		},
 	}}
 
-	md := spec.GenerateAgentMD(af, nil)
+	md := spec.GenerateAgentMD(af, "", nil)
 
 	// Header comes from Agent.Name.
 	if !strings.HasPrefix(md, "# meteo\n") {
@@ -74,7 +74,7 @@ func TestGenerateAgentMD_Minimal(t *testing.T) {
 	// containing an explicit "no tools available" rule. Empty BINs
 	// would otherwise let the model fall back on training-data shell
 	// utilities (`ls`, `cat`, …) and pretend to invoke them.
-	md := spec.GenerateAgentMD(&spec.Agentfile{Agent: &spec.Agent{Name: "blank"}}, nil)
+	md := spec.GenerateAgentMD(&spec.Agentfile{Agent: &spec.Agent{Name: "blank"}}, "", nil)
 
 	if !strings.HasPrefix(md, "# blank\n") {
 		t.Fatalf("missing header:\n%s", md)
@@ -123,7 +123,7 @@ func TestGenerateAgentMD_MemoryDiscipline_PresentWhenNoteSaveCapExists(t *testin
 		{Name: "note_list", Description: "List stored notes."},
 		{Name: "note_pin", Description: "Pin a note into the prompt."},
 	}
-	md := spec.GenerateAgentMD(&spec.Agentfile{Agent: &spec.Agent{Name: "any"}}, caps)
+	md := spec.GenerateAgentMD(&spec.Agentfile{Agent: &spec.Agent{Name: "any"}}, "", caps)
 
 	for _, needle := range []string{
 		"## Memory — when to save, when to read",
@@ -156,7 +156,7 @@ func TestGenerateAgentMD_MemoryDiscipline_AbsentWithoutNoteSaveCap(t *testing.T)
 	caps := []spec.Capability{
 		{Name: "context_list", Description: "List context files."},
 	}
-	md := spec.GenerateAgentMD(&spec.Agentfile{Agent: &spec.Agent{Name: "any"}}, caps)
+	md := spec.GenerateAgentMD(&spec.Agentfile{Agent: &spec.Agent{Name: "any"}}, "", caps)
 
 	if strings.Contains(md, "## Memory") {
 		t.Fatalf("Memory section leaked when note_save cap is absent:\n%s", md)
@@ -178,7 +178,7 @@ func TestGenerateAgentMD_DeclaresCapabilities(t *testing.T) {
 		{Name: "job_submit", Description: "Submit a BIN as an async job."},
 		{Name: "context_show", Description: "Show the content of one context file."},
 	}
-	md := spec.GenerateAgentMD(&spec.Agentfile{Agent: &spec.Agent{Name: "any"}}, caps)
+	md := spec.GenerateAgentMD(&spec.Agentfile{Agent: &spec.Agent{Name: "any"}}, "", caps)
 
 	for _, needle := range []string{
 		"## Capabilities",
@@ -208,7 +208,7 @@ func TestGenerateAgentMD_EnforcesAllowlistRule(t *testing.T) {
 	md := spec.GenerateAgentMD(&spec.Agentfile{Agent: &spec.Agent{
 		Name: "demo",
 		Bins: []*spec.Bin{{Name: "jq"}},
-	}}, nil)
+	}}, "", nil)
 
 	for _, needle := range []string{
 		"ONLY binaries you may invoke",
