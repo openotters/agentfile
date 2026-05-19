@@ -66,10 +66,12 @@ func (a *Agent) PromptStream(ctx context.Context, req executor.PromptRequest, cb
 		}
 
 		cb(executor.PromptEvent{
-			Type:    ev.GetType(),
-			Step:    ev.GetStep(),
-			Tool:    ev.GetTool(),
-			Content: ev.GetContent(),
+			Type:       ev.GetType(),
+			Step:       ev.GetStep(),
+			Tool:       ev.GetTool(),
+			Content:    ev.GetContent(),
+			ToolID:     ev.GetToolId(),
+			DurationMs: ev.GetDurationMs(),
 		})
 	}
 }

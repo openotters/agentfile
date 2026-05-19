@@ -27,6 +27,12 @@ type PromptEvent struct {
 	Step    int32
 	Tool    string
 	Content string
+	// ToolID correlates tool.call and tool.result events for the
+	// same invocation. Stable for the lifetime of one tool call.
+	ToolID string
+	// DurationMs is the wall-clock execution time for the event.
+	// Populated on tool.result; zero on every other type.
+	DurationMs int64
 }
 
 // Prompter returns the full assistant response as a single blob, discarding
