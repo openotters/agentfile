@@ -37,18 +37,19 @@ var instructionParser = participle.MustBuild[instruction]( //nolint:gochecknoglo
 )
 
 type instruction struct {
-	From    *string      `  "FROM" @Ident`
-	Runtime *string      `| "RUNTIME" @Ident`
-	Model   *string      `| "MODEL" @Ident`
-	Name    *string      `| "NAME" @Ident`
-	Context *contextInst `| @@`
-	Config  *configInst  `| @@`
-	Bin     *binInst     `| @@`
-	Add     *addInst     `| @@`
-	Exec    *execInst    `| @@`
-	Label   *labelInst   `| @@`
-	Arg     *argInst     `| @@`
-	Env     *envInst     `| @@`
+	From       *string         `  "FROM" @Ident`
+	Runtime    *string         `| "RUNTIME" @Ident`
+	Model      *string         `| "MODEL" @Ident`
+	Name       *string         `| "NAME" @Ident`
+	Context    *contextInst    `| @@`
+	Config     *configInst     `| @@`
+	Bin        *binInst        `| @@`
+	Add        *addInst        `| @@`
+	Exec       *execInst       `| @@`
+	Label      *labelInst      `| @@`
+	Arg        *argInst        `| @@`
+	Env        *envInst        `| @@`
+	Capability *capabilityInst `| @@`
 }
 
 type contextInst struct {
@@ -95,4 +96,14 @@ type envInst struct {
 	Key   string  `"ENV" @Ident "="`
 	Value string  `@( Ident | String )`
 	Desc  *string `@String?`
+}
+
+// capabilityInst is one CAPABILITY <name> line. Repeatable —
+// each line adds one tool name to Agent.Capabilities. The
+// daemon's catalogue resolves names → full Capability entries
+// at materialise time; the Agentfile only carries the names so
+// the spec layer stays oblivious to daemon-specific tool
+// descriptions.
+type capabilityInst struct {
+	Name string `"CAPABILITY" @Ident`
 }

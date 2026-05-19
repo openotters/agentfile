@@ -18,6 +18,14 @@ type Agent struct {
 	Labels   map[string]string `json:"labels,omitempty"`
 	Args     map[string]string `json:"args,omitempty"`
 	Envs     []*Env            `json:"envs,omitempty"`
+	// Capabilities is the list of runtime tool names this agent
+	// is granted (declared via CAPABILITY directives). Daemon-
+	// resolved against its catalogue at materialise time to
+	// produce the full Capability entries on disk + the
+	// JWT.Capabilities claim. Empty list = no caps at all (the
+	// strict default). Operator override happens at create time
+	// via `otters run --cap`.
+	Capabilities []string `json:"capabilities,omitempty"`
 	// RuntimeMounts is a runtime-only side-channel populated by
 	// spec.WithMounts. Not serialised — Agentfiles do not have a
 	// MOUNT directive; mounts live with the launch invocation

@@ -126,7 +126,36 @@ func mergeAgent(parent, child *spec.Agent) *spec.Agent {
 		merged.Args[k] = v
 	}
 
+	// Capabilities: union, dedup. A child Agentfile adds to its
+	// parent's surface; there's no way to drop a parent's cap
+	// from within an Agentfile today (operator override via
+	// --cap can replace the whole set if needed).
+	merged.Capabilities = mergeStringSet(parent.Capabilities, child.Capabilities)
+
 	return merged
+}
+
+func mergeStringSet(parent, child []string) []string {
+	if len(parent) == 0 && len(child) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(parent)+len(child))
+	out := make([]string, 0, len(parent)+len(child))
+	for _, s := range parent {
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	for _, s := range child {
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
 }
 
 func mergeContexts(parent, child []*spec.Context) []*spec.Context {

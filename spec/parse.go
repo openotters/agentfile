@@ -183,6 +183,16 @@ func applyInstruction(agent *Agent, inst *instruction, heredoc string) {
 			e.Description = *inst.Env.Desc
 		}
 		agent.Envs = append(agent.Envs, e)
+
+	case inst.Capability != nil:
+		// Deduplicate — a repeated CAPABILITY directive is a
+		// no-op, not an additive multiplier.
+		for _, existing := range agent.Capabilities {
+			if existing == inst.Capability.Name {
+				return
+			}
+		}
+		agent.Capabilities = append(agent.Capabilities, inst.Capability.Name)
 	}
 }
 
@@ -257,6 +267,10 @@ func instructionType(inst *instruction) string {
 		return "EXEC"
 	case inst.Arg != nil:
 		return "ARG"
+	case inst.Env != nil:
+		return "ENV"
+	case inst.Capability != nil:
+		return "CAPABILITY"
 	default:
 		return ""
 	}
