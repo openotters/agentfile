@@ -34,7 +34,6 @@ packages:
       Prompter:
       StreamPrompter:
       ObjectPrompter:
-      SessionReader:
       StatusObserver:
   github.com/openotters/agentfile/executor/system:
     interfaces:

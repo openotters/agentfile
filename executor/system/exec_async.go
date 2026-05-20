@@ -52,7 +52,8 @@ func (a *Agent) Exec(ctx context.Context, bin string, args []string, stdin strin
 	if !systemBinDeclared(rt, bin) {
 		return executor.ExecResult{
 			Err: fmt.Errorf(
-				"system exec: BIN %q is not declared in agent %s — add `BIN %s <ref>` to its Agentfile and rebuild, or pick one of: %s",
+				"system exec: BIN %q is not declared in agent %s — "+
+					"add `BIN %s <ref>` to its Agentfile and rebuild, or pick one of: %s",
 				bin, a.id, bin, systemDeclaredBinNames(rt),
 			),
 		}
@@ -68,7 +69,9 @@ func (a *Agent) Exec(ctx context.Context, bin string, args []string, stdin strin
 	// way to fix it.
 	if !filepathExistsRelative(rootDir, "usr", "bin", bin) {
 		return executor.ExecResult{
-			Err: fmt.Errorf("system exec: BIN %q is declared but missing on disk in agent %s — re-run materialise / restart the agent", bin, a.id),
+			Err: fmt.Errorf(
+				"system exec: BIN %q is declared but missing on disk in agent %s — "+
+					"re-run materialise / restart the agent", bin, a.id),
 		}
 	}
 

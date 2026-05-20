@@ -16,21 +16,6 @@ service AgentRuntime {
   // memory, no tool loop.
   rpc PromptObject(PromptObjectRequest) returns (PromptObjectResponse);
 
-  // Sessions
-  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
-  rpc DeleteSession(DeleteSessionRequest) returns (DeleteSessionResponse);
-  rpc ListSessionMessages(ListSessionMessagesRequest) returns (ListSessionMessagesResponse);
-
-  // Notes — per-agent, cross-session KV store the model uses for
-  // durable facts (see runtime/pkg/notes). The daemon proxies these
-  // for the operator UI; the model itself writes via the note_*
-  // tools registered with fantasy.
-  rpc ListNotes(ListNotesRequest) returns (ListNotesResponse);
-  rpc GetNote(GetNoteRequest) returns (GetNoteResponse);
-  rpc SaveNote(SaveNoteRequest) returns (SaveNoteResponse);
-  rpc DeleteNote(DeleteNoteRequest) returns (DeleteNoteResponse);
-  rpc SetNoteInContext(SetNoteInContextRequest) returns (SetNoteInContextResponse);
-
   // Probes
   rpc Health(HealthRequest) returns (HealthResponse);
   rpc Ready(ReadyRequest) returns (ReadyResponse);
@@ -92,117 +77,6 @@ message PromptObjectResponse {
   // The raw assistant text, mostly useful when the model returned
   // repaired or otherwise interesting content alongside the parse.
   string raw_text = 2;
-}
-
-// Sessions
-
-message ListSessionsRequest {}
-
-message SessionInfo {
-  string id = 1;
-  int32 message_count = 2;
-  int64 last_active = 3;
-}
-
-message ListSessionsResponse {
-  repeated SessionInfo sessions = 1;
-}
-
-message DeleteSessionRequest {
-  string session_id = 1;
-}
-
-message DeleteSessionResponse {}
-
-message ListSessionMessagesRequest {
-  string session_id = 1;
-  int32  limit      = 2; // 0 = server default
-}
-
-message SessionMessage {
-  string role          = 1; // "user" | "assistant"
-  string content       = 2; // user: prompt text. assistant: JSON parts array.
-  int64  created_at    = 3; // unix seconds
-  string branches_json = 4; // assistant only: JSON array of alternative parts arrays
-  int32  active_branch = 5; // assistant only: index of currently-active branch
-}
-
-message ListSessionMessagesResponse {
-  repeated SessionMessage messages = 1;
-}
-
-// Notes
-//
-// Mirrors the runtime's pkg/notes Store API surface, plus quota
-// inputs on SaveNote so the daemon can override per-agent caps
-// without re-reading agent.yaml. Errors flow through standard
-// gRPC codes — NotFound for missing keys, FailedPrecondition for
-// quota violations.
-
-message Note {
-  string key         = 1;
-  string content     = 2;  // empty in ListNotes responses; full body in GetNote
-  string preview     = 3;
-  bool   in_context  = 4;
-  int64  created_at  = 5;  // unix seconds
-  int64  updated_at  = 6;  // unix seconds
-}
-
-message ListNotesRequest {
-  // When true, ListNotes returns only notes flagged in_context = 1.
-  // Default (false) returns all notes ordered by updated_at desc.
-  bool only_in_context = 1;
-}
-
-message ListNotesResponse {
-  // content is omitted for list responses; clients call GetNote
-  // to fetch the body of one note. preview + in_context + key are
-  // populated.
-  repeated Note notes = 1;
-}
-
-message GetNoteRequest {
-  string key = 1;
-}
-
-message GetNoteResponse {
-  Note note = 1;
-}
-
-message SaveNoteRequest {
-  string key     = 1;
-  string content = 2;
-  // 0 → server uses the agent.yaml-configured caps. Non-zero
-  // overrides for this request only; useful when the operator
-  // is intentionally bypassing the model's quotas via the UI.
-  int32  max_bytes = 3;
-  int32  max_count = 4;
-}
-
-message SaveNoteResponse {
-  Note note = 1;
-  // True when the key already existed and Save overwrote it.
-  bool  overwrote = 2;
-}
-
-message DeleteNoteRequest {
-  string key = 1;
-}
-
-message DeleteNoteResponse {
-  // True when the key existed before delete. False on a no-op
-  // (key wasn't present); both forms still return a success
-  // response — Delete is idempotent.
-  bool deleted = 1;
-}
-
-message SetNoteInContextRequest {
-  string key        = 1;
-  bool   in_context = 2;
-}
-
-message SetNoteInContextResponse {
-  Note note = 1;
 }
 
 // Probes

@@ -91,6 +91,8 @@ const labelOpenottersAsyncJob = "io.openotters.async-job-id"
 // runtime + BINs) before Exec is called — otherwise we don't know
 // what to mount. Calling Exec on an un-initialized agent surfaces
 // in ExecResult.Err.
+//
+//nolint:funlen // linear container lifecycle from validate to inspect
 func (a *Agent) Exec(ctx context.Context, bin string, args []string, stdin string) executor.ExecResult {
 	rt := a.Runtime()
 	if rt == nil {
@@ -112,7 +114,8 @@ func (a *Agent) Exec(ctx context.Context, bin string, args []string, stdin strin
 	if !binDeclared(rt, bin) {
 		return executor.ExecResult{
 			Err: fmt.Errorf(
-				"docker async-exec: BIN %q is not declared in agent %s — add `BIN %s <ref>` to its Agentfile and rebuild, or pick one of: %s",
+				"docker async-exec: BIN %q is not declared in agent %s — "+
+					"add `BIN %s <ref>` to its Agentfile and rebuild, or pick one of: %s",
 				bin, a.deps.id, bin, declaredBinNames(rt),
 			),
 		}
@@ -123,10 +126,7 @@ func (a *Agent) Exec(ctx context.Context, bin string, args []string, stdin strin
 	// invocation (not the runtime entrypoint) and the labels carry
 	// the job ID for ghost cleanup.
 	jobLabel := "exec-" + strconv.FormatInt(time.Now().UnixNano(), 36)
-	cfg, hostCfg, err := a.buildExecContainer(rt, bin, args, jobLabel)
-	if err != nil {
-		return executor.ExecResult{Err: fmt.Errorf("docker async-exec: build container spec: %w", err)}
-	}
+	cfg, hostCfg := a.buildExecContainer(rt, bin, args, jobLabel)
 
 	// Stdin path: the container needs OpenStdin + StdinOnce so docker
 	// keeps stdin open across the attach, then closes it once the
@@ -183,6 +183,10 @@ func (a *Agent) Exec(ctx context.Context, bin string, args []string, stdin strin
 	// the API round-trip; we don't want to slow down the happy path.
 	killCtx, killCancel := context.WithCancel(context.Background())
 	defer killCancel()
+	// Intentional Background ctx: parent ctx is already cancelled
+	// when this branch fires, so any derived ctx would inherit the
+	// cancellation and abort the ContainerStop RPC before it lands.
+	//nolint:gosec // G118: detached ctx required for SIGKILL after parent cancel
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -227,14 +231,14 @@ func (a *Agent) Exec(ctx context.Context, bin string, args []string, stdin strin
 		stderrW = io.MultiWriter(&stderr, streamSinks.Stderr)
 	}
 
-	if err := dockerStdCopy(stdoutW, stderrW, logsResp); err != nil &&
-		!errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
+	if copyErr := dockerStdCopy(stdoutW, stderrW, logsResp); copyErr != nil &&
+		!errors.Is(copyErr, io.EOF) && !errors.Is(copyErr, context.Canceled) {
 		// Non-EOF errors usually mean the docker daemon went away.
 		// Capture what we have and surface the underlying error.
 		return executor.ExecResult{
 			Stdout: stdout.String(),
 			Stderr: stderr.String(),
-			Err:    fmt.Errorf("docker async-exec: stream logs: %w", err),
+			Err:    fmt.Errorf("docker async-exec: stream logs: %w", copyErr),
 			Handle: handle,
 		}
 	}
@@ -254,7 +258,7 @@ func (a *Agent) Exec(ctx context.Context, bin string, args []string, stdin strin
 
 	exit := 0
 	if insp.Container.State != nil {
-		exit = int(insp.Container.State.ExitCode)
+		exit = insp.Container.State.ExitCode
 	}
 
 	out := executor.ExecResult{
@@ -309,9 +313,11 @@ func (a *Agent) pipeStdin(ctx context.Context, id, payload string) error {
 // (workspace at /workspace, agent root at /agent, runtime image at
 // /opt/runtime, each BIN at /opt/bins/<name>) so the job sees the
 // identical filesystem the agent's runtime sees.
+//
+//nolint:funlen // single-purpose builder; the body is one linear assembly of mounts + env + labels
 func (a *Agent) buildExecContainer(
 	rt *executor.Runtime, bin string, args []string, jobLabel string,
-) (*containertypes.Config, *containertypes.HostConfig, error) {
+) (*containertypes.Config, *containertypes.HostConfig) {
 	bins := make(map[string]string, len(rt.Tools))
 	for _, t := range rt.Tools {
 		bins[t.Name] = t.Ref
@@ -439,7 +445,7 @@ func (a *Agent) buildExecContainer(
 		hostCfg.ExtraHosts = append(hostCfg.ExtraHosts, extraHost)
 	}
 
-	return cfg, hostCfg, nil
+	return cfg, hostCfg
 }
 
 // binDeclared reports whether `name` is among the agent's declared

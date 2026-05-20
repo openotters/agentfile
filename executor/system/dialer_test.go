@@ -7,7 +7,6 @@ import (
 	"net"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/go-git/go-billy/v6/memfs"
 	"github.com/google/uuid"
@@ -24,7 +23,7 @@ import (
 
 // bufconnHarness wires a stub Runtime server to an in-memory
 // listener and returns a system.Dialer that every subsequent Prompt /
-// PromptObject / ListSessionMessages call is routed through.
+// PromptObject call is routed through.
 //
 // Cleanup registers the listener + server + resulting ClientConn on
 // t.Cleanup so individual tests stay focused on behaviour assertions.
@@ -88,15 +87,12 @@ type stubAgentRuntimeServer struct {
 	agentv1.UnimplementedAgentRuntimeServer
 
 	// Responses the stub returns on each RPC. Tests set these.
-	chatStreamEvents   []*agentv1.ChatStreamEvent
-	chatStreamErr      error
-	promptObjectResp   *agentv1.PromptObjectResponse
-	promptObjectErr    error
-	listSessionResp    *agentv1.ListSessionMessagesResponse
-	listSessionErr     error
-	lastChatStreamReq  *agentv1.ChatStreamRequest
-	lastPromptObjReq   *agentv1.PromptObjectRequest
-	lastListSessionReq *agentv1.ListSessionMessagesRequest
+	chatStreamEvents  []*agentv1.ChatStreamEvent
+	chatStreamErr     error
+	promptObjectResp  *agentv1.PromptObjectResponse
+	promptObjectErr   error
+	lastChatStreamReq *agentv1.ChatStreamRequest
+	lastPromptObjReq  *agentv1.PromptObjectRequest
 }
 
 func (s *stubAgentRuntimeServer) ChatStream(
@@ -129,18 +125,6 @@ func (s *stubAgentRuntimeServer) PromptObject(
 	return s.promptObjectResp, nil
 }
 
-func (s *stubAgentRuntimeServer) ListSessionMessages(
-	_ context.Context, req *agentv1.ListSessionMessagesRequest,
-) (*agentv1.ListSessionMessagesResponse, error) {
-	s.lastListSessionReq = req
-
-	if s.listSessionErr != nil {
-		return nil, s.listSessionErr
-	}
-
-	return s.listSessionResp, nil
-}
-
 // --- guardrails: dial/prompt without addr ------------------------------
 
 func TestPrompt_NoAddrErrors(t *testing.T) {
@@ -162,17 +146,6 @@ func TestPromptObject_NoAddrErrors(t *testing.T) {
 	_, err := a.PromptObject(context.Background(), executor.ObjectPromptRequest{Prompt: "hi"})
 	if err == nil || !strings.Contains(err.Error(), "has no runtime address") {
 		t.Fatalf("PromptObject without addr = %v, want 'has no runtime address' error", err)
-	}
-}
-
-func TestListSessionMessages_NoAddrErrors(t *testing.T) {
-	t.Parallel()
-
-	a := system.NewAgent(uuid.New(), memfs.New())
-
-	_, err := a.ListSessionMessages(context.Background(), "sess", 10)
-	if err == nil || !strings.Contains(err.Error(), "has no runtime address") {
-		t.Fatalf("ListSessionMessages without addr = %v, want 'has no runtime address' error", err)
 	}
 }
 
@@ -301,60 +274,5 @@ func TestPromptObject_ServerErrorWrapped(t *testing.T) {
 	_, err := a.PromptObject(context.Background(), executor.ObjectPromptRequest{Prompt: "x"})
 	if err == nil || !strings.Contains(err.Error(), "runtime PromptObject") {
 		t.Fatalf("PromptObject error = %v, want wrapped 'runtime PromptObject'", err)
-	}
-}
-
-// --- ListSessionMessages -----------------------------------------------
-
-func TestListSessionMessages_HappyPath(t *testing.T) {
-	t.Parallel()
-
-	h := newBufconnHarness(t)
-	now := time.Now().Unix()
-	h.svc.listSessionResp = &agentv1.ListSessionMessagesResponse{
-		Messages: []*agentv1.SessionMessage{
-			{Role: "user", Content: "hi", CreatedAt: now - 30},
-			{Role: "assistant", Content: "hello", CreatedAt: now},
-		},
-	}
-
-	a := h.newTestAgent(t)
-
-	got, err := a.ListSessionMessages(context.Background(), "sess", 10)
-	if err != nil {
-		t.Fatalf("ListSessionMessages: %v", err)
-	}
-
-	if len(got) != 2 {
-		t.Fatalf("got %d messages, want 2", len(got))
-	}
-
-	if got[0].Role != "user" || got[1].Role != "assistant" {
-		t.Fatalf("roles = %v", got)
-	}
-
-	if got[1].Content != "hello" {
-		t.Fatalf("content = %q, want 'hello'", got[1].Content)
-	}
-
-	if got[1].CreatedAt.Unix() != now {
-		t.Fatalf("CreatedAt = %v, want %v", got[1].CreatedAt.Unix(), now)
-	}
-
-	if h.svc.lastListSessionReq.GetSessionId() != "sess" || h.svc.lastListSessionReq.GetLimit() != 10 {
-		t.Fatalf("request not threaded: %+v", h.svc.lastListSessionReq)
-	}
-}
-
-func TestListSessionMessages_ServerError(t *testing.T) {
-	t.Parallel()
-
-	h := newBufconnHarness(t)
-	h.svc.listSessionErr = errors.New("db down")
-
-	a := h.newTestAgent(t)
-
-	if _, err := a.ListSessionMessages(context.Background(), "sess", 0); err == nil {
-		t.Fatal("expected server-side error to propagate")
 	}
 }

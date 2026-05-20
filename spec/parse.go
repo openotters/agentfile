@@ -89,7 +89,7 @@ func (p *parser) parse() (*Agentfile, error) {
 // variants. Splitting per-directive helpers would obscure the per-line
 // dispatch the parser runs.
 //
-//nolint:funlen // exhaustive directive switch
+//nolint:funlen,gocognit,gocyclo,cyclop // exhaustive directive switch — flat assignments
 func applyInstruction(agent *Agent, inst *instruction, heredoc string) {
 	switch {
 	case inst.From != nil:

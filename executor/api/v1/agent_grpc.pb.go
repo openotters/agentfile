@@ -19,19 +19,11 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AgentRuntime_Chat_FullMethodName                = "/openotters.agent.v1.AgentRuntime/Chat"
-	AgentRuntime_ChatStream_FullMethodName          = "/openotters.agent.v1.AgentRuntime/ChatStream"
-	AgentRuntime_PromptObject_FullMethodName        = "/openotters.agent.v1.AgentRuntime/PromptObject"
-	AgentRuntime_ListSessions_FullMethodName        = "/openotters.agent.v1.AgentRuntime/ListSessions"
-	AgentRuntime_DeleteSession_FullMethodName       = "/openotters.agent.v1.AgentRuntime/DeleteSession"
-	AgentRuntime_ListSessionMessages_FullMethodName = "/openotters.agent.v1.AgentRuntime/ListSessionMessages"
-	AgentRuntime_ListNotes_FullMethodName           = "/openotters.agent.v1.AgentRuntime/ListNotes"
-	AgentRuntime_GetNote_FullMethodName             = "/openotters.agent.v1.AgentRuntime/GetNote"
-	AgentRuntime_SaveNote_FullMethodName            = "/openotters.agent.v1.AgentRuntime/SaveNote"
-	AgentRuntime_DeleteNote_FullMethodName          = "/openotters.agent.v1.AgentRuntime/DeleteNote"
-	AgentRuntime_SetNoteInContext_FullMethodName    = "/openotters.agent.v1.AgentRuntime/SetNoteInContext"
-	AgentRuntime_Health_FullMethodName              = "/openotters.agent.v1.AgentRuntime/Health"
-	AgentRuntime_Ready_FullMethodName               = "/openotters.agent.v1.AgentRuntime/Ready"
+	AgentRuntime_Chat_FullMethodName         = "/openotters.agent.v1.AgentRuntime/Chat"
+	AgentRuntime_ChatStream_FullMethodName   = "/openotters.agent.v1.AgentRuntime/ChatStream"
+	AgentRuntime_PromptObject_FullMethodName = "/openotters.agent.v1.AgentRuntime/PromptObject"
+	AgentRuntime_Health_FullMethodName       = "/openotters.agent.v1.AgentRuntime/Health"
+	AgentRuntime_Ready_FullMethodName        = "/openotters.agent.v1.AgentRuntime/Ready"
 )
 
 // AgentRuntimeClient is the client API for AgentRuntime service.
@@ -47,19 +39,6 @@ type AgentRuntimeClient interface {
 	// JSON / tool / text mode the provider supports. No session
 	// memory, no tool loop.
 	PromptObject(ctx context.Context, in *PromptObjectRequest, opts ...grpc.CallOption) (*PromptObjectResponse, error)
-	// Sessions
-	ListSessions(ctx context.Context, in *ListSessionsRequest, opts ...grpc.CallOption) (*ListSessionsResponse, error)
-	DeleteSession(ctx context.Context, in *DeleteSessionRequest, opts ...grpc.CallOption) (*DeleteSessionResponse, error)
-	ListSessionMessages(ctx context.Context, in *ListSessionMessagesRequest, opts ...grpc.CallOption) (*ListSessionMessagesResponse, error)
-	// Notes — per-agent, cross-session KV store the model uses for
-	// durable facts (see runtime/pkg/notes). The daemon proxies these
-	// for the operator UI; the model itself writes via the note_*
-	// tools registered with fantasy.
-	ListNotes(ctx context.Context, in *ListNotesRequest, opts ...grpc.CallOption) (*ListNotesResponse, error)
-	GetNote(ctx context.Context, in *GetNoteRequest, opts ...grpc.CallOption) (*GetNoteResponse, error)
-	SaveNote(ctx context.Context, in *SaveNoteRequest, opts ...grpc.CallOption) (*SaveNoteResponse, error)
-	DeleteNote(ctx context.Context, in *DeleteNoteRequest, opts ...grpc.CallOption) (*DeleteNoteResponse, error)
-	SetNoteInContext(ctx context.Context, in *SetNoteInContextRequest, opts ...grpc.CallOption) (*SetNoteInContextResponse, error)
 	// Probes
 	Health(ctx context.Context, in *HealthRequest, opts ...grpc.CallOption) (*HealthResponse, error)
 	Ready(ctx context.Context, in *ReadyRequest, opts ...grpc.CallOption) (*ReadyResponse, error)
@@ -112,86 +91,6 @@ func (c *agentRuntimeClient) PromptObject(ctx context.Context, in *PromptObjectR
 	return out, nil
 }
 
-func (c *agentRuntimeClient) ListSessions(ctx context.Context, in *ListSessionsRequest, opts ...grpc.CallOption) (*ListSessionsResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ListSessionsResponse)
-	err := c.cc.Invoke(ctx, AgentRuntime_ListSessions_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *agentRuntimeClient) DeleteSession(ctx context.Context, in *DeleteSessionRequest, opts ...grpc.CallOption) (*DeleteSessionResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(DeleteSessionResponse)
-	err := c.cc.Invoke(ctx, AgentRuntime_DeleteSession_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *agentRuntimeClient) ListSessionMessages(ctx context.Context, in *ListSessionMessagesRequest, opts ...grpc.CallOption) (*ListSessionMessagesResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ListSessionMessagesResponse)
-	err := c.cc.Invoke(ctx, AgentRuntime_ListSessionMessages_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *agentRuntimeClient) ListNotes(ctx context.Context, in *ListNotesRequest, opts ...grpc.CallOption) (*ListNotesResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ListNotesResponse)
-	err := c.cc.Invoke(ctx, AgentRuntime_ListNotes_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *agentRuntimeClient) GetNote(ctx context.Context, in *GetNoteRequest, opts ...grpc.CallOption) (*GetNoteResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GetNoteResponse)
-	err := c.cc.Invoke(ctx, AgentRuntime_GetNote_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *agentRuntimeClient) SaveNote(ctx context.Context, in *SaveNoteRequest, opts ...grpc.CallOption) (*SaveNoteResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SaveNoteResponse)
-	err := c.cc.Invoke(ctx, AgentRuntime_SaveNote_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *agentRuntimeClient) DeleteNote(ctx context.Context, in *DeleteNoteRequest, opts ...grpc.CallOption) (*DeleteNoteResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(DeleteNoteResponse)
-	err := c.cc.Invoke(ctx, AgentRuntime_DeleteNote_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *agentRuntimeClient) SetNoteInContext(ctx context.Context, in *SetNoteInContextRequest, opts ...grpc.CallOption) (*SetNoteInContextResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SetNoteInContextResponse)
-	err := c.cc.Invoke(ctx, AgentRuntime_SetNoteInContext_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *agentRuntimeClient) Health(ctx context.Context, in *HealthRequest, opts ...grpc.CallOption) (*HealthResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(HealthResponse)
@@ -225,19 +124,6 @@ type AgentRuntimeServer interface {
 	// JSON / tool / text mode the provider supports. No session
 	// memory, no tool loop.
 	PromptObject(context.Context, *PromptObjectRequest) (*PromptObjectResponse, error)
-	// Sessions
-	ListSessions(context.Context, *ListSessionsRequest) (*ListSessionsResponse, error)
-	DeleteSession(context.Context, *DeleteSessionRequest) (*DeleteSessionResponse, error)
-	ListSessionMessages(context.Context, *ListSessionMessagesRequest) (*ListSessionMessagesResponse, error)
-	// Notes — per-agent, cross-session KV store the model uses for
-	// durable facts (see runtime/pkg/notes). The daemon proxies these
-	// for the operator UI; the model itself writes via the note_*
-	// tools registered with fantasy.
-	ListNotes(context.Context, *ListNotesRequest) (*ListNotesResponse, error)
-	GetNote(context.Context, *GetNoteRequest) (*GetNoteResponse, error)
-	SaveNote(context.Context, *SaveNoteRequest) (*SaveNoteResponse, error)
-	DeleteNote(context.Context, *DeleteNoteRequest) (*DeleteNoteResponse, error)
-	SetNoteInContext(context.Context, *SetNoteInContextRequest) (*SetNoteInContextResponse, error)
 	// Probes
 	Health(context.Context, *HealthRequest) (*HealthResponse, error)
 	Ready(context.Context, *ReadyRequest) (*ReadyResponse, error)
@@ -259,30 +145,6 @@ func (UnimplementedAgentRuntimeServer) ChatStream(*ChatStreamRequest, grpc.Serve
 }
 func (UnimplementedAgentRuntimeServer) PromptObject(context.Context, *PromptObjectRequest) (*PromptObjectResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PromptObject not implemented")
-}
-func (UnimplementedAgentRuntimeServer) ListSessions(context.Context, *ListSessionsRequest) (*ListSessionsResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method ListSessions not implemented")
-}
-func (UnimplementedAgentRuntimeServer) DeleteSession(context.Context, *DeleteSessionRequest) (*DeleteSessionResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method DeleteSession not implemented")
-}
-func (UnimplementedAgentRuntimeServer) ListSessionMessages(context.Context, *ListSessionMessagesRequest) (*ListSessionMessagesResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method ListSessionMessages not implemented")
-}
-func (UnimplementedAgentRuntimeServer) ListNotes(context.Context, *ListNotesRequest) (*ListNotesResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method ListNotes not implemented")
-}
-func (UnimplementedAgentRuntimeServer) GetNote(context.Context, *GetNoteRequest) (*GetNoteResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetNote not implemented")
-}
-func (UnimplementedAgentRuntimeServer) SaveNote(context.Context, *SaveNoteRequest) (*SaveNoteResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method SaveNote not implemented")
-}
-func (UnimplementedAgentRuntimeServer) DeleteNote(context.Context, *DeleteNoteRequest) (*DeleteNoteResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method DeleteNote not implemented")
-}
-func (UnimplementedAgentRuntimeServer) SetNoteInContext(context.Context, *SetNoteInContextRequest) (*SetNoteInContextResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method SetNoteInContext not implemented")
 }
 func (UnimplementedAgentRuntimeServer) Health(context.Context, *HealthRequest) (*HealthResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Health not implemented")
@@ -358,150 +220,6 @@ func _AgentRuntime_PromptObject_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
-func _AgentRuntime_ListSessions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ListSessionsRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(AgentRuntimeServer).ListSessions(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: AgentRuntime_ListSessions_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(AgentRuntimeServer).ListSessions(ctx, req.(*ListSessionsRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _AgentRuntime_DeleteSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(DeleteSessionRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(AgentRuntimeServer).DeleteSession(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: AgentRuntime_DeleteSession_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(AgentRuntimeServer).DeleteSession(ctx, req.(*DeleteSessionRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _AgentRuntime_ListSessionMessages_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ListSessionMessagesRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(AgentRuntimeServer).ListSessionMessages(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: AgentRuntime_ListSessionMessages_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(AgentRuntimeServer).ListSessionMessages(ctx, req.(*ListSessionMessagesRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _AgentRuntime_ListNotes_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ListNotesRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(AgentRuntimeServer).ListNotes(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: AgentRuntime_ListNotes_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(AgentRuntimeServer).ListNotes(ctx, req.(*ListNotesRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _AgentRuntime_GetNote_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetNoteRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(AgentRuntimeServer).GetNote(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: AgentRuntime_GetNote_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(AgentRuntimeServer).GetNote(ctx, req.(*GetNoteRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _AgentRuntime_SaveNote_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(SaveNoteRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(AgentRuntimeServer).SaveNote(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: AgentRuntime_SaveNote_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(AgentRuntimeServer).SaveNote(ctx, req.(*SaveNoteRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _AgentRuntime_DeleteNote_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(DeleteNoteRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(AgentRuntimeServer).DeleteNote(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: AgentRuntime_DeleteNote_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(AgentRuntimeServer).DeleteNote(ctx, req.(*DeleteNoteRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _AgentRuntime_SetNoteInContext_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(SetNoteInContextRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(AgentRuntimeServer).SetNoteInContext(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: AgentRuntime_SetNoteInContext_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(AgentRuntimeServer).SetNoteInContext(ctx, req.(*SetNoteInContextRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _AgentRuntime_Health_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(HealthRequest)
 	if err := dec(in); err != nil {
@@ -552,38 +270,6 @@ var AgentRuntime_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PromptObject",
 			Handler:    _AgentRuntime_PromptObject_Handler,
-		},
-		{
-			MethodName: "ListSessions",
-			Handler:    _AgentRuntime_ListSessions_Handler,
-		},
-		{
-			MethodName: "DeleteSession",
-			Handler:    _AgentRuntime_DeleteSession_Handler,
-		},
-		{
-			MethodName: "ListSessionMessages",
-			Handler:    _AgentRuntime_ListSessionMessages_Handler,
-		},
-		{
-			MethodName: "ListNotes",
-			Handler:    _AgentRuntime_ListNotes_Handler,
-		},
-		{
-			MethodName: "GetNote",
-			Handler:    _AgentRuntime_GetNote_Handler,
-		},
-		{
-			MethodName: "SaveNote",
-			Handler:    _AgentRuntime_SaveNote_Handler,
-		},
-		{
-			MethodName: "DeleteNote",
-			Handler:    _AgentRuntime_DeleteNote_Handler,
-		},
-		{
-			MethodName: "SetNoteInContext",
-			Handler:    _AgentRuntime_SetNoteInContext_Handler,
 		},
 		{
 			MethodName: "Health",
