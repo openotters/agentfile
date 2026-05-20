@@ -108,6 +108,13 @@ func buildCmdEnv(rt *executor.Runtime, rootDir, daemonURL, agentToken string) []
 	// don't live in agent.yaml.
 	env, _ = executor.AppendUserEnv(env, rt.Envs)
 
+	// CONFIG entries land on disk in agent.yaml's `configs:` block
+	// (the runtime's primary read path) AND on the spawn env as
+	// RUNTIME_<UPPER_SNAKE> so subprocess wrappers don't have to
+	// re-parse YAML. Reserved/provider keys can't collide because
+	// they don't share the RUNTIME_ prefix.
+	env = executor.AppendConfigEnv(env, rt.Configs)
+
 	return env
 }
 

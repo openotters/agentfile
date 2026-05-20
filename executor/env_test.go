@@ -141,6 +141,59 @@ func TestAppendUserEnv_NilOrEmpty(t *testing.T) {
 	}
 }
 
+func TestAppendConfigEnv_EmitsRuntimePrefixedKeys(t *testing.T) {
+	t.Parallel()
+
+	base := []string{"PATH=/usr/bin"}
+
+	configs := map[string]string{
+		"max-tokens":      "2048",
+		"memory-strategy": "summarize",
+		"temperature":     "0.7",
+	}
+
+	got := executor.AppendConfigEnv(base, configs)
+
+	// Output is sorted by key so the test can assert exact ordering.
+	want := []string{
+		"PATH=/usr/bin",
+		"RUNTIME_MAX_TOKENS=2048",
+		"RUNTIME_MEMORY_STRATEGY=summarize",
+		"RUNTIME_TEMPERATURE=0.7",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("len: got %v, want %v", got, want)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("env[%d] = %q, want %q", i, got[i], w)
+		}
+	}
+}
+
+func TestAppendConfigEnv_EmptyOrNilLeavesBaseUntouched(t *testing.T) {
+	t.Parallel()
+
+	base := []string{"PATH=/usr/bin"}
+
+	got := executor.AppendConfigEnv(base, nil)
+	if len(got) != 1 || got[0] != "PATH=/usr/bin" {
+		t.Errorf("nil configs: got %v", got)
+	}
+
+	got = executor.AppendConfigEnv(base, map[string]string{})
+	if len(got) != 1 || got[0] != "PATH=/usr/bin" {
+		t.Errorf("empty configs: got %v", got)
+	}
+
+	// Empty keys are skipped — they'd produce a bare "RUNTIME_=value"
+	// which isn't a useful identifier and tools wouldn't read it.
+	got = executor.AppendConfigEnv(base, map[string]string{"": "ignored", "ok": "v"})
+	if len(got) != 2 || got[1] != "RUNTIME_OK=v" {
+		t.Errorf("empty-key skip: got %v", got)
+	}
+}
+
 func TestBuildLockedEnv_NoHostInheritance(t *testing.T) {
 	// Spike a host env var BuildLockedEnv must NOT pass through.
 	// No t.Parallel — Setenv mutates the test process env.

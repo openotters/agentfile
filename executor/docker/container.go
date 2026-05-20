@@ -127,6 +127,12 @@ type containerSpec struct {
 	// reserved keys at build time; AppendUserEnv filters defensively
 	// at runtime.
 	UserEnvs []*spec.Env
+
+	// Configs is the resolved CONFIG map (kebab-case key → string).
+	// Exported on the spawn env as RUNTIME_<UPPER_SNAKE> alongside
+	// the agent.yaml `configs:` block, so subprocess wrappers can
+	// read tunables without re-parsing the YAML.
+	Configs map[string]string
 }
 
 // buildConfig assembles the moby Container.Config for the agent's
@@ -310,6 +316,7 @@ func (s *containerSpec) buildEnv() []string {
 	}
 
 	env, _ = executor.AppendUserEnv(env, s.UserEnvs)
+	env = executor.AppendConfigEnv(env, s.Configs)
 
 	return env
 }

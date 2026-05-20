@@ -2,10 +2,41 @@ package executor
 
 import (
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/openotters/agentfile/spec"
 )
+
+// configEnvPrefix is the env-var prefix produced by AppendConfigEnv.
+// Every CONFIG key declared in an Agentfile (or set in agent.yaml's
+// configs: block) gets exported as RUNTIME_<UPPER_SNAKE_CASE> on
+// the runtime process so tooling that prefers env over config-file
+// reads sees the same values without parsing agent.yaml.
+const configEnvPrefix = "RUNTIME_"
+
+// configKeyToEnv rewrites a kebab-case CONFIG key into the env-var
+// form: lowercase → uppercase, '-' → '_', then RUNTIME_ prefix.
+// Keys are validated to be DNS-1123 names at the spec layer (see
+// spec.Validate). Any non-alphanumeric character that slips through
+// here is replaced with '_' so the resulting string is still a legal
+// POSIX identifier; the caller decides whether to log the rewrite.
+func configKeyToEnv(key string) string {
+	var b strings.Builder
+	b.Grow(len(configEnvPrefix) + len(key))
+	b.WriteString(configEnvPrefix)
+	for _, r := range key {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r - 'a' + 'A')
+		case (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9'):
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
+}
 
 // EnvOptions configure the locked-down environment that Executor
 // implementations hand to spawned runtimes (and through them, every
@@ -110,6 +141,41 @@ var reservedRuntimeEnvKeys = map[string]struct{}{
 	"OTTERS_AGENT_ROOT":  {},
 	"OTTERSD_URL":        {},
 	"OTTERS_AGENT_TOKEN": {},
+}
+
+// AppendConfigEnv exports the Agentfile's CONFIG entries onto the
+// spawn env as RUNTIME_<UPPER_SNAKE_CASE> variables. The same values
+// already land in agent.yaml's `configs:` block (the runtime's
+// primary read path), so this is the secondary, env-flavoured copy
+// that tooling and subprocess wrappers can read without re-parsing
+// the YAML.
+//
+// Example:  CONFIG max-tokens=2048  →  RUNTIME_MAX_TOKENS=2048
+//
+// Keys are sorted before emission so the env list stays stable
+// across runs (helpful for diff-testing the executor's spawn env).
+// Entries are appended to base in place; reserved
+// (locked-env / provider-cred) keys can't collide because they
+// don't share the RUNTIME_ prefix.
+func AppendConfigEnv(base []string, configs map[string]string) []string {
+	if len(configs) == 0 {
+		return base
+	}
+
+	keys := make([]string, 0, len(configs))
+	for k := range configs {
+		if k == "" {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	env := base
+	for _, k := range keys {
+		env = append(env, configKeyToEnv(k)+"="+configs[k])
+	}
+	return env
 }
 
 // AppendUserEnv appends user-declared envs onto a base built by

@@ -25,6 +25,7 @@ runtime, model, personality, binaries, data, memory — in a single file that ca
     * [ADD](#add)
     * [LABEL](#label)
     * [ARG](#arg)
+    * [CAPABILITY](#capability)
   * [Complete Example](#complete-example)
   * [Runtime API Contract](#runtime-api-contract)
     * [Service Definition](#service-definition)
@@ -87,10 +88,13 @@ When using `FROM <agent-ref>`, the child inherits the parent's full definition a
 | `RUNTIME`               | Overrides parent, clears all accumulated `CONFIG`s |
 | `MODEL`, `NAME`, `EXEC` | Overrides parent                                   |
 | `CONTEXT`               | Same-name overrides parent, new names appended     |
-| `CONFIG`                | Appended (cleared if `RUNTIME` is overridden)      |
+| `CONFIG`                | Same-key overrides parent, new keys appended (cleared if `RUNTIME` is overridden) |
 | `BIN`                   | Appended to parent's binary list                   |
 | `ADD`                   | Appended to parent's files                         |
 | `LABEL`                 | Merged (child wins on key conflicts)               |
+| `ARG`                   | Merged (child wins on key conflicts)               |
+| `ENV`                   | Same-key overrides parent, new keys appended       |
+| `CAPABILITY`            | De-duplicated union with parent's list             |
 
 ### RUNTIME
 
@@ -165,8 +169,9 @@ Well-known context names:
 
 ### CONFIG
 
-Declares configuration options. Each key has a typed default value and optional description. Config keys are
-tunable parameters that can be overridden at deploy time. Values support YAML primitive types inline.
+Declares free-form configuration entries. Each `CONFIG` line attaches a key, an optional value, and an optional
+description to the agent. The Agentfile spec doesn't enumerate which keys are allowed — runtimes consume whatever
+they recognise and ignore the rest. Use whatever keys your runtime documents.
 
 ```agentfile
 # String (default type, quotes optional for single words)
@@ -193,11 +198,37 @@ CONFIG custom-header "Custom HTTP header for tool requests"
 
 Format: `CONFIG <key[!]>[=<value>] [description]`
 
-- Values are interpreted as YAML primitives: strings, integers, floats, booleans (`true`/`false`)
-- Quoted values are always strings: `CONFIG port="8080"` is the string `"8080"`, not an integer
-- Unquoted values follow YAML type resolution: `1024` → int, `0.7` → float, `true` → bool, `hello` → string
-- Trailing `!` marks the key as required — deploy fails if no value is provided
-- Required keys cannot have a default value
+- Keys MUST be DNS-1123 names: lowercase alphanumeric and `-`, start and end with an alphanumeric character, at
+  most 63 characters (same shape as a Kubernetes resource name). Kebab case is the convention; runtimes split on
+  `-` when mapping to nested fields.
+- Values are free-form strings on the wire. Runtimes pick their own typing rules — quoted values arrive as
+  strings; unquoted values look like YAML primitives but the runtime gets the raw text and interprets it.
+- Trailing `!` marks the key as required — deploy fails if no value is provided.
+- Required keys cannot have a default value.
+
+CONFIG entries are passed to the runtime through **two** channels at agent start:
+
+1. **The agent's `agent.yaml` `configs:` block.** Materialised to disk at agent create time. Runtimes read this
+   as the primary source of truth.
+2. **Spawn-env variables.** Every key is also exported on the runtime process as `RUNTIME_<UPPER_SNAKE_CASE>`,
+   with `-` rewritten to `_`. Tools spawned by the runtime see them too. Useful for subprocess wrappers that want
+   tunables without re-parsing YAML.
+
+For example, `CONFIG max-tokens=2048` lands on the runtime as:
+
+```yaml
+# agent.yaml
+configs:
+  max-tokens: "2048"
+```
+
+and:
+
+```
+RUNTIME_MAX_TOKENS=2048
+```
+
+Both copies always agree — the env is derived from the same map at spawn time.
 
 ### ENV
 
@@ -408,6 +439,37 @@ CONFIG max-tokens=${MAX_TOKENS}
 Format: `ARG <key>[=default]`
 
 ARGs are expanded in all instruction values that follow the ARG declaration. Undefined variables are left as-is.
+
+### CAPABILITY
+
+Declares which runtime-provided LLM-facing tools the agent's model is allowed to call. Each line names one
+capability; repeating the directive grants more.
+
+```agentfile
+CAPABILITY note-save
+CAPABILITY note-list
+CAPABILITY note-show
+CAPABILITY job-submit
+CAPABILITY job-wait
+```
+
+Format: `CAPABILITY <name>`
+
+- Names MUST be DNS-1123 (same rule as `CONFIG` keys: lowercase alphanumeric and `-`, start/end alphanumeric,
+  ≤63 chars).
+- Free-form on the spec side. The Agentfile lists names; the daemon resolves them against the runtime's
+  capability catalogue at agent-create time and produces the full per-capability entry (description, schema) on
+  disk in `agent.yaml`.
+- **No default.** An Agentfile with zero `CAPABILITY` directives grants the agent **no runtime tools at all**
+  (the strict default). Tool images mounted via `BIN` are separate — they always work; `CAPABILITY` gates only
+  the runtime's *own* tool surface (notes, async jobs, agent-to-agent calls, etc.).
+- Names unknown to the daemon's catalogue at create time are rejected. Listing the same name twice is fine; the
+  parser de-duplicates.
+- Operators can override at run time with `otters run --cap <name>` to add caps the Agentfile didn't grant.
+
+Capabilities are an **allowlist**, not a description. The runtime carries every capability it implements; the
+Agentfile picks the subset this agent is allowed to expose to its model. The daemon's JWT carries the resolved
+list and the runtime enforces it before dispatch.
 
 ## Complete Example
 

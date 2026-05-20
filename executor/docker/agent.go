@@ -462,6 +462,7 @@ func (a *Agent) create(ctx context.Context) error {
 		DaemonURL:     a.deps.daemonURL,
 		AgentToken:    a.deps.agentToken,
 		UserEnvs:      userEnvs,
+		Configs:       rt.Configs,
 	}
 
 	// A previous Run may have left a stopped container with the

@@ -347,6 +347,7 @@ func (a *Agent) buildExecContainer(
 		}
 	}
 	env, _ = executor.AppendUserEnv(env, rt.Envs)
+	env = executor.AppendConfigEnv(env, rt.Configs)
 
 	cmd := append([]string{bin}, args...)
 
