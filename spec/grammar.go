@@ -98,12 +98,21 @@ type envInst struct {
 	Desc  *string `@String?`
 }
 
-// capabilityInst is one CAPABILITY <name> line. Repeatable —
-// each line adds one tool name to Agent.Capabilities. The
-// daemon's catalogue resolves names → full Capability entries
-// at materialise time; the Agentfile only carries the names so
-// the spec layer stays oblivious to daemon-specific tool
-// descriptions.
+// capabilityInst is one CAPABILITY <name> [<name> …] line.
+// Repeatable; each line adds one or more tool names to
+// Agent.Capabilities. The daemon's catalogue resolves names →
+// full Capability entries at materialise time; the Agentfile only
+// carries the names so the spec layer stays oblivious to daemon-
+// specific tool descriptions.
+//
+// Multi-name form lets operators cluster related caps on one
+// line:
+//
+//	CAPABILITY note-save note-list note-show
+//	CAPABILITY job-submit job-wait
+//
+// Single-name lines (CAPABILITY note-save) still work and are the
+// recommended shape when only one cap is granted.
 type capabilityInst struct {
-	Name string `"CAPABILITY" @Ident`
+	Names []string `"CAPABILITY" @Ident+`
 }

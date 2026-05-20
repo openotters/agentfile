@@ -623,3 +623,61 @@ NAME test
 		t.Errorf("from = %q, want scratch", af.Agent.From)
 	}
 }
+
+func TestParse_CapabilitySingleAndMultiName(t *testing.T) {
+	t.Parallel()
+
+	// Three forms in one Agentfile:
+	//   1. Single name per line (the original shape).
+	//   2. Multiple names on one line (the new shape).
+	//   3. A duplicate spanning both forms — must be folded out.
+	input := `FROM scratch
+CAPABILITY note-save
+CAPABILITY note-list note-show
+CAPABILITY job-submit job-wait job-list
+CAPABILITY note-save
+`
+
+	af, err := spec.Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	want := []string{
+		"note-save",
+		"note-list",
+		"note-show",
+		"job-submit",
+		"job-wait",
+		"job-list",
+	}
+
+	got := af.Agent.Capabilities
+	if len(got) != len(want) {
+		t.Fatalf("capabilities = %v, want %v", got, want)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("capabilities[%d] = %q, want %q", i, got[i], w)
+		}
+	}
+}
+
+func TestParse_CapabilityDedupesWithinSameLine(t *testing.T) {
+	t.Parallel()
+
+	// Same name repeated on one line is a no-op, not a multiplier.
+	input := `FROM scratch
+CAPABILITY note-save note-save note-save
+`
+
+	af, err := spec.Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	got := af.Agent.Capabilities
+	if len(got) != 1 || got[0] != "note-save" {
+		t.Errorf("capabilities = %v, want [note-save]", got)
+	}
+}

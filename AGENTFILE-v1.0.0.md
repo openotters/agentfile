@@ -442,18 +442,19 @@ ARGs are expanded in all instruction values that follow the ARG declaration. Und
 
 ### CAPABILITY
 
-Declares which runtime-provided LLM-facing tools the agent's model is allowed to call. Each line names one
-capability; repeating the directive grants more.
+Declares which runtime-provided LLM-facing tools the agent's model is allowed to call. A single directive can
+list one capability or several; repeating the directive grants more.
 
 ```agentfile
+# One name per line — the recommended shape when granting a single cap.
 CAPABILITY note-save
-CAPABILITY note-list
-CAPABILITY note-show
-CAPABILITY job-submit
-CAPABILITY job-wait
+
+# Multiple names on one line — cluster related caps together.
+CAPABILITY note-list note-show
+CAPABILITY job-submit job-wait job-list
 ```
 
-Format: `CAPABILITY <name>`
+Format: `CAPABILITY <name> [<name> …]`
 
 - Names MUST be DNS-1123 (same rule as `CONFIG` keys: lowercase alphanumeric and `-`, start/end alphanumeric,
   ≤63 chars).
@@ -463,8 +464,8 @@ Format: `CAPABILITY <name>`
 - **No default.** An Agentfile with zero `CAPABILITY` directives grants the agent **no runtime tools at all**
   (the strict default). Tool images mounted via `BIN` are separate — they always work; `CAPABILITY` gates only
   the runtime's *own* tool surface (notes, async jobs, agent-to-agent calls, etc.).
-- Names unknown to the daemon's catalogue at create time are rejected. Listing the same name twice is fine; the
-  parser de-duplicates.
+- Names unknown to the daemon's catalogue at create time are rejected. Listing the same name twice — within one
+  line, across lines, or via `FROM` inheritance — is fine; the parser de-duplicates.
 - Operators can override at run time with `otters run --cap <name>` to add caps the Agentfile didn't grant.
 
 Capabilities are an **allowlist**, not a description. The runtime carries every capability it implements; the

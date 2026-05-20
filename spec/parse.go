@@ -185,14 +185,26 @@ func applyInstruction(agent *Agent, inst *instruction, heredoc string) {
 		agent.Envs = append(agent.Envs, e)
 
 	case inst.Capability != nil:
-		// Deduplicate — a repeated CAPABILITY directive is a
-		// no-op, not an additive multiplier.
-		for _, existing := range agent.Capabilities {
-			if existing == inst.Capability.Name {
-				return
+		// One directive can list multiple names — the grammar
+		// accepts CAPABILITY <name> [<name>…]. Deduplicate as we
+		// go so repeating a name within the same line, across
+		// lines, or via FROM inheritance is a no-op rather than
+		// an additive multiplier.
+		for _, name := range inst.Capability.Names {
+			if name == "" {
+				continue
+			}
+			already := false
+			for _, existing := range agent.Capabilities {
+				if existing == name {
+					already = true
+					break
+				}
+			}
+			if !already {
+				agent.Capabilities = append(agent.Capabilities, name)
 			}
 		}
-		agent.Capabilities = append(agent.Capabilities, inst.Capability.Name)
 	}
 }
 
