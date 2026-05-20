@@ -39,6 +39,119 @@ func (_m *MockAgent) EXPECT() *MockAgent_Expecter {
 	return &MockAgent_Expecter{mock: &_m.Mock}
 }
 
+// Exec provides a mock function for the type MockAgent
+func (_mock *MockAgent) Exec(ctx context.Context, bin string, args []string, stdin string) executor.ExecResult {
+	ret := _mock.Called(ctx, bin, args, stdin)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Exec")
+	}
+
+	var r0 executor.ExecResult
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, []string, string) executor.ExecResult); ok {
+		r0 = returnFunc(ctx, bin, args, stdin)
+	} else {
+		r0 = ret.Get(0).(executor.ExecResult)
+	}
+	return r0
+}
+
+// MockAgent_Exec_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Exec'
+type MockAgent_Exec_Call struct {
+	*mock.Call
+}
+
+// Exec is a helper method to define mock.On call
+//   - ctx context.Context
+//   - bin string
+//   - args []string
+//   - stdin string
+func (_e *MockAgent_Expecter) Exec(ctx interface{}, bin interface{}, args interface{}, stdin interface{}) *MockAgent_Exec_Call {
+	return &MockAgent_Exec_Call{Call: _e.mock.On("Exec", ctx, bin, args, stdin)}
+}
+
+func (_c *MockAgent_Exec_Call) Run(run func(ctx context.Context, bin string, args []string, stdin string)) *MockAgent_Exec_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 []string
+		if args[2] != nil {
+			arg2 = args[2].([]string)
+		}
+		var arg3 string
+		if args[3] != nil {
+			arg3 = args[3].(string)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+		)
+	})
+	return _c
+}
+
+func (_c *MockAgent_Exec_Call) Return(execResult executor.ExecResult) *MockAgent_Exec_Call {
+	_c.Call.Return(execResult)
+	return _c
+}
+
+func (_c *MockAgent_Exec_Call) RunAndReturn(run func(ctx context.Context, bin string, args []string, stdin string) executor.ExecResult) *MockAgent_Exec_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// FailureReason provides a mock function for the type MockAgent
+func (_mock *MockAgent) FailureReason() executor.FailureReason {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for FailureReason")
+	}
+
+	var r0 executor.FailureReason
+	if returnFunc, ok := ret.Get(0).(func() executor.FailureReason); ok {
+		r0 = returnFunc()
+	} else {
+		r0 = ret.Get(0).(executor.FailureReason)
+	}
+	return r0
+}
+
+// MockAgent_FailureReason_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FailureReason'
+type MockAgent_FailureReason_Call struct {
+	*mock.Call
+}
+
+// FailureReason is a helper method to define mock.On call
+func (_e *MockAgent_Expecter) FailureReason() *MockAgent_FailureReason_Call {
+	return &MockAgent_FailureReason_Call{Call: _e.mock.On("FailureReason")}
+}
+
+func (_c *MockAgent_FailureReason_Call) Run(run func()) *MockAgent_FailureReason_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockAgent_FailureReason_Call) Return(failureReason executor.FailureReason) *MockAgent_FailureReason_Call {
+	_c.Call.Return(failureReason)
+	return _c
+}
+
+func (_c *MockAgent_FailureReason_Call) RunAndReturn(run func() executor.FailureReason) *MockAgent_FailureReason_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Prepare provides a mock function for the type MockAgent
 func (_mock *MockAgent) Prepare(ctx context.Context) error {
 	ret := _mock.Called(ctx)
@@ -86,6 +199,57 @@ func (_c *MockAgent_Prepare_Call) Return(err error) *MockAgent_Prepare_Call {
 }
 
 func (_c *MockAgent_Prepare_Call) RunAndReturn(run func(ctx context.Context) error) *MockAgent_Prepare_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Probe provides a mock function for the type MockAgent
+func (_mock *MockAgent) Probe(ctx context.Context) error {
+	ret := _mock.Called(ctx)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Probe")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context) error); ok {
+		r0 = returnFunc(ctx)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockAgent_Probe_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Probe'
+type MockAgent_Probe_Call struct {
+	*mock.Call
+}
+
+// Probe is a helper method to define mock.On call
+//   - ctx context.Context
+func (_e *MockAgent_Expecter) Probe(ctx interface{}) *MockAgent_Probe_Call {
+	return &MockAgent_Probe_Call{Call: _e.mock.On("Probe", ctx)}
+}
+
+func (_c *MockAgent_Probe_Call) Run(run func(ctx context.Context)) *MockAgent_Probe_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		run(
+			arg0,
+		)
+	})
+	return _c
+}
+
+func (_c *MockAgent_Probe_Call) Return(err error) *MockAgent_Probe_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockAgent_Probe_Call) RunAndReturn(run func(ctx context.Context) error) *MockAgent_Probe_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -333,49 +497,6 @@ func (_c *MockAgent_Status_Call) RunAndReturn(run func() executor.Status) *MockA
 	return _c
 }
 
-// FailureReason provides a mock function for the type MockAgent
-func (_mock *MockAgent) FailureReason() executor.FailureReason {
-	ret := _mock.Called()
-
-	if len(ret) == 0 {
-		panic("no return value specified for FailureReason")
-	}
-
-	var r0 executor.FailureReason
-	if returnFunc, ok := ret.Get(0).(func() executor.FailureReason); ok {
-		r0 = returnFunc()
-	} else {
-		r0 = ret.Get(0).(executor.FailureReason)
-	}
-	return r0
-}
-
-// MockAgent_FailureReason_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FailureReason'
-type MockAgent_FailureReason_Call struct {
-	*mock.Call
-}
-
-func (_e *MockAgent_Expecter) FailureReason() *MockAgent_FailureReason_Call {
-	return &MockAgent_FailureReason_Call{Call: _e.mock.On("FailureReason")}
-}
-
-func (_c *MockAgent_FailureReason_Call) Run(run func()) *MockAgent_FailureReason_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run()
-	})
-	return _c
-}
-
-func (_c *MockAgent_FailureReason_Call) Return(reason executor.FailureReason) *MockAgent_FailureReason_Call {
-	_c.Call.Return(reason)
-	return _c
-}
-
-func (_c *MockAgent_FailureReason_Call) RunAndReturn(run func() executor.FailureReason) *MockAgent_FailureReason_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
 // StatusTracker provides a mock function for the type MockAgent
 func (_mock *MockAgent) StatusTracker() *executor.StatusTracker {
 	ret := _mock.Called()
@@ -400,6 +521,7 @@ type MockAgent_StatusTracker_Call struct {
 	*mock.Call
 }
 
+// StatusTracker is a helper method to define mock.On call
 func (_e *MockAgent_Expecter) StatusTracker() *MockAgent_StatusTracker_Call {
 	return &MockAgent_StatusTracker_Call{Call: _e.mock.On("StatusTracker")}
 }
@@ -411,61 +533,12 @@ func (_c *MockAgent_StatusTracker_Call) Run(run func()) *MockAgent_StatusTracker
 	return _c
 }
 
-func (_c *MockAgent_StatusTracker_Call) Return(tracker *executor.StatusTracker) *MockAgent_StatusTracker_Call {
-	_c.Call.Return(tracker)
+func (_c *MockAgent_StatusTracker_Call) Return(statusTracker *executor.StatusTracker) *MockAgent_StatusTracker_Call {
+	_c.Call.Return(statusTracker)
 	return _c
 }
 
 func (_c *MockAgent_StatusTracker_Call) RunAndReturn(run func() *executor.StatusTracker) *MockAgent_StatusTracker_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// Probe provides a mock function for the type MockAgent
-func (_mock *MockAgent) Probe(ctx context.Context) error {
-	ret := _mock.Called(ctx)
-
-	if len(ret) == 0 {
-		panic("no return value specified for Probe")
-	}
-
-	var r0 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context) error); ok {
-		r0 = returnFunc(ctx)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(error)
-		}
-	}
-	return r0
-}
-
-// MockAgent_Probe_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Probe'
-type MockAgent_Probe_Call struct {
-	*mock.Call
-}
-
-func (_e *MockAgent_Expecter) Probe(ctx interface{}) *MockAgent_Probe_Call {
-	return &MockAgent_Probe_Call{Call: _e.mock.On("Probe", ctx)}
-}
-
-func (_c *MockAgent_Probe_Call) Run(run func(ctx context.Context)) *MockAgent_Probe_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 context.Context
-		if args[0] != nil {
-			arg0 = args[0].(context.Context)
-		}
-		run(arg0)
-	})
-	return _c
-}
-
-func (_c *MockAgent_Probe_Call) Return(err error) *MockAgent_Probe_Call {
-	_c.Call.Return(err)
-	return _c
-}
-
-func (_c *MockAgent_Probe_Call) RunAndReturn(run func(ctx context.Context) error) *MockAgent_Probe_Call {
 	_c.Call.Return(run)
 	return _c
 }

@@ -36,6 +36,50 @@ func (_m *MockStatusObserver) EXPECT() *MockStatusObserver_Expecter {
 	return &MockStatusObserver_Expecter{mock: &_m.Mock}
 }
 
+// FailureReason provides a mock function for the type MockStatusObserver
+func (_mock *MockStatusObserver) FailureReason() executor.FailureReason {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for FailureReason")
+	}
+
+	var r0 executor.FailureReason
+	if returnFunc, ok := ret.Get(0).(func() executor.FailureReason); ok {
+		r0 = returnFunc()
+	} else {
+		r0 = ret.Get(0).(executor.FailureReason)
+	}
+	return r0
+}
+
+// MockStatusObserver_FailureReason_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FailureReason'
+type MockStatusObserver_FailureReason_Call struct {
+	*mock.Call
+}
+
+// FailureReason is a helper method to define mock.On call
+func (_e *MockStatusObserver_Expecter) FailureReason() *MockStatusObserver_FailureReason_Call {
+	return &MockStatusObserver_FailureReason_Call{Call: _e.mock.On("FailureReason")}
+}
+
+func (_c *MockStatusObserver_FailureReason_Call) Run(run func()) *MockStatusObserver_FailureReason_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockStatusObserver_FailureReason_Call) Return(failureReason executor.FailureReason) *MockStatusObserver_FailureReason_Call {
+	_c.Call.Return(failureReason)
+	return _c
+}
+
+func (_c *MockStatusObserver_FailureReason_Call) RunAndReturn(run func() executor.FailureReason) *MockStatusObserver_FailureReason_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Status provides a mock function for the type MockStatusObserver
 func (_mock *MockStatusObserver) Status() executor.Status {
 	ret := _mock.Called()
@@ -76,49 +120,6 @@ func (_c *MockStatusObserver_Status_Call) Return(status executor.Status) *MockSt
 }
 
 func (_c *MockStatusObserver_Status_Call) RunAndReturn(run func() executor.Status) *MockStatusObserver_Status_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// FailureReason provides a mock function for the type MockStatusObserver
-func (_mock *MockStatusObserver) FailureReason() executor.FailureReason {
-	ret := _mock.Called()
-
-	if len(ret) == 0 {
-		panic("no return value specified for FailureReason")
-	}
-
-	var r0 executor.FailureReason
-	if returnFunc, ok := ret.Get(0).(func() executor.FailureReason); ok {
-		r0 = returnFunc()
-	} else {
-		r0 = ret.Get(0).(executor.FailureReason)
-	}
-	return r0
-}
-
-// MockStatusObserver_FailureReason_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FailureReason'
-type MockStatusObserver_FailureReason_Call struct {
-	*mock.Call
-}
-
-func (_e *MockStatusObserver_Expecter) FailureReason() *MockStatusObserver_FailureReason_Call {
-	return &MockStatusObserver_FailureReason_Call{Call: _e.mock.On("FailureReason")}
-}
-
-func (_c *MockStatusObserver_FailureReason_Call) Run(run func()) *MockStatusObserver_FailureReason_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run()
-	})
-	return _c
-}
-
-func (_c *MockStatusObserver_FailureReason_Call) Return(reason executor.FailureReason) *MockStatusObserver_FailureReason_Call {
-	_c.Call.Return(reason)
-	return _c
-}
-
-func (_c *MockStatusObserver_FailureReason_Call) RunAndReturn(run func() executor.FailureReason) *MockStatusObserver_FailureReason_Call {
 	_c.Call.Return(run)
 	return _c
 }
