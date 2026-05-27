@@ -53,27 +53,27 @@ func main() {
 		os.Exit(1)
 	}
 
-	tag := repo.Reference.Reference
-	if tag == "" {
-		tag = "latest"
+	srcTag := repo.Reference.Reference
+	if srcTag == "" {
+		srcTag = "latest"
 	}
 
 	store := memory.New()
 
-	desc, err := oras.Copy(ctx, repo, tag, store, tag, oras.DefaultCopyOptions)
-	if err != nil {
+	// Tag the copied content in our local store with the same
+	// "name:tag" shape afstore.Load resolves against
+	// (Reference.String formats as "<name>:<tag>" with a
+	// "latest" fallback). Copying under ref.String() keeps
+	// the source-side oras lookup (srcTag) decoupled from the
+	// destination-side load lookup (ref.String()).
+	dstTag := ref.String()
+
+	if _, err := oras.Copy(ctx, repo, srcTag, store, dstTag, oras.DefaultCopyOptions); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 
-	if tag != "latest" {
-		if err := store.Tag(ctx, desc, "latest"); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-	}
-
-	_, af, err := afstore.Load(ctx, store, spec.ParseReference("latest"))
+	_, af, err := afstore.Load(ctx, store, ref)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
