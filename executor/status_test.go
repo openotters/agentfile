@@ -3,6 +3,7 @@ package executor
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 )
@@ -36,6 +37,7 @@ func TestFailureReasonString(t *testing.T) {
 		FailureNone:             "",
 		FailurePull:             "pull",
 		FailureInit:             "init",
+		FailureConfig:           "config",
 		FailureModel:            "model",
 		FailureReadinessTimeout: "readiness_timeout",
 		FailureCrashed:          "crashed",
@@ -200,5 +202,65 @@ func TestWaitForStatus_ContextCancel(t *testing.T) {
 	_, err := WaitForStatus(ctx, trackerAdapter{tr}, StatusStopped)
 	if err == nil {
 		t.Fatal("WaitForStatus returned nil err despite ctx timeout")
+	}
+}
+
+func TestStatusTracker_ConcurrentSetAndCancel(t *testing.T) {
+	t.Parallel()
+
+	// Before the fix, Set broadcast outside the lock while cancel closed the
+	// channel under it, so a Set racing a cancel could send on a closed
+	// channel and panic. This hammers that interleaving; -race and a plain
+	// run must both stay panic-free.
+	tr := NewStatusTracker()
+
+	var wg sync.WaitGroup
+
+	for range 50 {
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+
+			ch, cancel := tr.Subscribe()
+			go func() {
+				for range ch { //nolint:revive // draining until close
+				}
+			}()
+			cancel()
+		}()
+
+		go func() {
+			defer wg.Done()
+
+			tr.Set(StatusStarting)
+			tr.SetFailure(FailureCrashed)
+			tr.Set(StatusStopped)
+		}()
+	}
+
+	wg.Wait()
+}
+
+func TestStatusTracker_SetUnless(t *testing.T) {
+	t.Parallel()
+
+	tr := NewStatusTracker()
+	tr.SetFailure(FailureCrashed)
+
+	if tr.SetUnless(StatusStopped, StatusFailed) {
+		t.Error("SetUnless should not overwrite a guarded status")
+	}
+
+	if tr.Get() != StatusFailed || tr.Failure() != FailureCrashed {
+		t.Errorf("guarded status changed: %v/%v", tr.Get(), tr.Failure())
+	}
+
+	if !tr.SetUnless(StatusStopped, StatusRemoved) {
+		t.Error("SetUnless should set when no guard matches")
+	}
+
+	if tr.Get() != StatusStopped {
+		t.Errorf("status = %v, want stopped", tr.Get())
 	}
 }

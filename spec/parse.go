@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -30,6 +32,7 @@ type parser struct {
 	scanner          *bufio.Scanner
 	line             int
 	firstInstruction string
+	fromSeen         bool
 }
 
 func (p *parser) parse() (*Agentfile, error) {
@@ -37,15 +40,21 @@ func (p *parser) parse() (*Agentfile, error) {
 
 	for p.scanner.Scan() {
 		p.line++
-		trimmed := strings.TrimSpace(p.scanner.Text())
+		text := p.scanner.Text()
+
+		if p.line == 1 && strings.HasPrefix(text, "\ufeff") {
+			return nil, fmt.Errorf("agentfile must be UTF-8 without a byte-order mark")
+		}
+
+		trimmed := strings.TrimSpace(text)
 
 		if trimmed == "" {
 			continue
 		}
 
 		if strings.HasPrefix(trimmed, "#") {
-			if strings.HasPrefix(trimmed, "# syntax=") {
-				af.Syntax = strings.TrimPrefix(trimmed, "# syntax=")
+			if err := p.handleComment(af, trimmed); err != nil {
+				return nil, err
 			}
 
 			continue
@@ -67,6 +76,21 @@ func (p *parser) parse() (*Agentfile, error) {
 			p.firstInstruction = instructionType(inst)
 		}
 
+		if inst.From != nil {
+			if p.fromSeen {
+				return nil, p.errorf("FROM must appear exactly once")
+			}
+
+			p.fromSeen = true
+		}
+
+		if inst.Context != nil && inst.Context.File != nil && heredoc != "" {
+			return nil, p.errorf(
+				"CONTEXT %s: file:// reference and heredoc are mutually exclusive",
+				inst.Context.Name,
+			)
+		}
+
 		applyInstruction(af.Agent, inst, heredoc)
 	}
 
@@ -83,6 +107,43 @@ func (p *parser) parse() (*Agentfile, error) {
 	}
 
 	return validate(af)
+}
+
+// handleComment processes a full-line comment. The only comment with
+// meaning is the `# syntax=` directive, honored solely on the very
+// first line — anywhere else it would silently change which grammar
+// the file claims, so it is an error.
+func (p *parser) handleComment(af *Agentfile, trimmed string) error {
+	if !strings.HasPrefix(trimmed, "# syntax=") {
+		return nil
+	}
+
+	if p.line != 1 {
+		return p.errorf("# syntax= directive must be the very first line")
+	}
+
+	af.Syntax = strings.TrimPrefix(trimmed, "# syntax=")
+	if err := validateSyntax(af.Syntax); err != nil {
+		return p.errorf("%v", err)
+	}
+
+	return nil
+}
+
+// validateSyntax rejects `# syntax=` values the parser does not
+// implement. The grammar evolves additively within a major, so the
+// accepted set is a closed list per parser release.
+func validateSyntax(syntax string) error {
+	for _, s := range SupportedSyntaxes {
+		if syntax == s {
+			return nil
+		}
+	}
+
+	return fmt.Errorf(
+		"unsupported syntax %q (supported: %s)",
+		syntax, strings.Join(SupportedSyntaxes, ", "),
+	)
 }
 
 // applyInstruction is a long switch over the parsed instruction
@@ -157,9 +218,13 @@ func applyInstruction(agent *Agent, inst *instruction, heredoc string) {
 		agent.Bins = append(agent.Bins, bin)
 
 	case inst.Add != nil:
-		add := &Add{
-			Src: inst.Add.Src,
-			Dst: inst.Add.Dst,
+		add := &Add{Src: inst.Add.Src}
+		if inst.Add.Name != nil {
+			add.Name = *inst.Add.Name
+		} else {
+			// The flat destination filename defaults to the source's
+			// basename so the blob always carries an explicit name.
+			add.Name = path.Base(inst.Add.Src)
 		}
 		if inst.Add.Desc != nil {
 			add.Description = *inst.Add.Desc
@@ -367,10 +432,69 @@ func parseConfigValue(s string) any {
 	return s
 }
 
-// Validate checks structural invariants on a programmatically constructed
-// Agentfile: FROM is required, context name AGENT is reserved, and required
-// configs cannot carry a default value. Parse already runs Validate; callers
-// who build an Agentfile in code should call Validate themselves.
+// pathSafeNamePattern constrains every name that materialises as a
+// filesystem path under the agent root — NAME, CONTEXT names
+// (etc/context/{name}.md), BIN names (usr/bin/{name}), and ADD names
+// (etc/data/{name}). The shape forbids path separators and dot-prefixed
+// names, so no declared name can escape its directory.
+var pathSafeNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$`)
+
+// dns1123LabelPattern is the shape required of CONFIG keys and
+// CAPABILITY names: a DNS-1123 label — lowercase alphanumeric and `-`,
+// starting and ending alphanumeric, at most 63 characters.
+var dns1123LabelPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+
+// reservedContextNames are context files the executor generates; a
+// CONTEXT declaration with one of these names would be silently
+// shadowed at materialise, so it is rejected at validate instead.
+//
+//nolint:gochecknoglobals // immutable set consulted by Validate
+var reservedContextNames = map[string]struct{}{
+	"AGENT":     {},
+	"WORKSPACE": {},
+	"MOUNTS":    {},
+}
+
+// IsPathSafeName reports whether name satisfies the path-safe rule
+// (no separators, no dot prefix, ≤63 chars). Exported for consumers of
+// untrusted artifacts — e.g. the executor rejecting a crafted layer
+// title before using it as a filename.
+func IsPathSafeName(name string) bool {
+	return pathSafeNamePattern.MatchString(name)
+}
+
+func validatePathSafeName(kind, name string) error {
+	if name == "" {
+		return fmt.Errorf("%s: name cannot be empty", kind)
+	}
+
+	if !pathSafeNamePattern.MatchString(name) {
+		return fmt.Errorf(
+			"%s %s: name must match %s (it materialises as a filesystem path)",
+			kind, name, pathSafeNamePattern,
+		)
+	}
+
+	return nil
+}
+
+func validateDNS1123Label(kind, name string) error {
+	if !dns1123LabelPattern.MatchString(name) {
+		return fmt.Errorf(
+			"%s %s: must be a DNS-1123 label (lowercase alphanumeric and '-', "+
+				"start/end alphanumeric, at most 63 characters)",
+			kind, name,
+		)
+	}
+
+	return nil
+}
+
+// Validate checks structural invariants on a parsed or programmatically
+// constructed Agentfile: FROM presence, path-safe names, DNS-1123 CONFIG
+// keys and CAPABILITY names, reserved context names, no defaults on
+// required configs, and ENV key rules. Parse already runs Validate;
+// callers who build an Agentfile in code should call Validate themselves.
 func Validate(af *Agentfile) error {
 	if af == nil {
 		return fmt.Errorf("agentfile is nil")
@@ -384,15 +508,47 @@ func Validate(af *Agentfile) error {
 		return fmt.Errorf("FROM is required")
 	}
 
+	if af.Agent.Name != "" {
+		if err := validatePathSafeName("NAME", af.Agent.Name); err != nil {
+			return err
+		}
+	}
+
 	for _, ctx := range af.Agent.Contexts {
-		if ctx.Name == "AGENT" {
-			return fmt.Errorf("context name AGENT is reserved")
+		if _, reserved := reservedContextNames[ctx.Name]; reserved {
+			return fmt.Errorf("context name %s is reserved (executor-generated context file)", ctx.Name)
+		}
+
+		if err := validatePathSafeName("CONTEXT", ctx.Name); err != nil {
+			return err
+		}
+	}
+
+	for _, bin := range af.Agent.Bins {
+		if err := validatePathSafeName("BIN", bin.Name); err != nil {
+			return err
+		}
+	}
+
+	for _, add := range af.Agent.Adds {
+		if err := validatePathSafeName("ADD", add.Name); err != nil {
+			return err
 		}
 	}
 
 	for _, cfg := range af.Agent.Configs {
+		if err := validateDNS1123Label("CONFIG", cfg.Key); err != nil {
+			return err
+		}
+
 		if cfg.Required && cfg.Value != nil {
 			return fmt.Errorf("config %s: required configs cannot have a default value", cfg.Key)
+		}
+	}
+
+	for _, name := range af.Agent.Capabilities {
+		if err := validateDNS1123Label("CAPABILITY", name); err != nil {
+			return err
 		}
 	}
 
@@ -405,21 +561,92 @@ func Validate(af *Agentfile) error {
 	return nil
 }
 
+// RequiredConfigsProvided checks that every CONFIG marked required (a
+// trailing `!`) has a value by the time an agent is materialised. A
+// required config legitimately has no value at parse time — the whole
+// point is that the value is supplied later, at deploy — so this is a
+// SEPARATE check from Validate: the parser must NOT reject a bare
+// `CONFIG webhook-url!`, but an executor materialising an agent MUST.
+// Deploy-time values arrive via the WithConfig override, applied
+// before the executor's required-config gate.
+//
+// The check runs on the FLATTENED view (keyed-merge, last writer wins,
+// matching how configs materialise into agent.yaml): configs accumulate
+// as an append-only slice within a file and across FROM inheritance, so
+// a parent's `CONFIG key!` is satisfied by a child's `CONFIG key=v` —
+// the requirement flag is accumulated per key while the value is taken
+// from the last entry. It returns an error naming every still-unset
+// required key; a set-but-empty value (`key=""`) counts as set.
+func RequiredConfigsProvided(configs []*Config) error {
+	required := make(map[string]struct{})
+	value := make(map[string]any)
+
+	for _, c := range configs {
+		if c == nil {
+			continue
+		}
+
+		if c.Required {
+			required[c.Key] = struct{}{}
+		}
+
+		value[c.Key] = c.Value
+	}
+
+	var missing []string
+
+	for key := range required {
+		if value[key] == nil {
+			missing = append(missing, key)
+		}
+	}
+
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return fmt.Errorf("required config(s) have no value: %s", strings.Join(missing, ", "))
+	}
+
+	return nil
+}
+
 // reservedEnvKeys are produced by executor.BuildLockedEnv and must
 // not be overridden by user-declared ENV — overriding them breaks
 // the sandbox contract (PATH points at the agent's BIN dirs, HOME /
-// XDG_* / TMPDIR / OTTERS_AGENT_ROOT anchor the materialised tree).
+// XDG_* / TMPDIR / OTTERS_AGENT_ROOT anchor the materialised tree;
+// OTTERSD_URL / OTTERS_AGENT_TOKEN carry the daemon callback URL and
+// the agent's JWT). This set MUST stay in sync with executor's
+// reservedRuntimeEnvKeys — the runtime filter that drops these at
+// spawn time. Keeping build-time rejection and runtime filtering
+// aligned means a bad ENV fails loudly at build instead of being
+// silently dropped later. (executor imports spec, not vice versa, so
+// the two lists are mirrored by hand rather than shared.)
 //
 //nolint:gochecknoglobals // immutable allowlist consulted by validateEnvKey
 var reservedEnvKeys = map[string]struct{}{
-	"PATH":              {},
-	"HOME":              {},
-	"XDG_CONFIG_HOME":   {},
-	"XDG_CACHE_HOME":    {},
-	"XDG_DATA_HOME":     {},
-	"TMPDIR":            {},
-	"LANG":              {},
-	"OTTERS_AGENT_ROOT": {},
+	"PATH":               {},
+	"HOME":               {},
+	"XDG_CONFIG_HOME":    {},
+	"XDG_CACHE_HOME":     {},
+	"XDG_DATA_HOME":      {},
+	"TMPDIR":             {},
+	"LANG":               {},
+	"OTTERS_AGENT_ROOT":  {},
+	"OTTERSD_URL":        {},
+	"OTTERS_AGENT_TOKEN": {},
+}
+
+// ReservedEnvKeys returns the sorted list of ENV keys rejected by
+// Validate. Exported so the executor's reserved_sync test can assert
+// set equality with its spawn-time filter in both directions.
+func ReservedEnvKeys() []string {
+	keys := make([]string, 0, len(reservedEnvKeys))
+	for k := range reservedEnvKeys {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	return keys
 }
 
 // envKeyPattern matches POSIX-style env var names: leading letter or
@@ -443,7 +670,7 @@ func validateEnvKey(key string) error {
 	if _, reserved := reservedEnvKeys[key]; reserved {
 		return fmt.Errorf(
 			"ENV %s: key is reserved by the locked-down agent env "+
-				"(PATH/HOME/XDG_*/TMPDIR/LANG/OTTERS_AGENT_ROOT)",
+				"(PATH/HOME/XDG_*/TMPDIR/LANG/OTTERS_AGENT_ROOT/OTTERSD_URL/OTTERS_AGENT_TOKEN)",
 			key,
 		)
 	}

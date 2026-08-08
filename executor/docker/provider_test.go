@@ -8,6 +8,8 @@ import (
 
 	"github.com/go-git/go-billy/v6/memfs"
 	"github.com/google/uuid"
+	mobyclient "github.com/moby/moby/client"
+	"github.com/stretchr/testify/mock"
 	"oras.land/oras-go/v2"
 
 	"github.com/openotters/agentfile/executor"
@@ -88,6 +90,9 @@ func TestProvider_Destroy_EmptyRoot(t *testing.T) {
 	t.Parallel()
 
 	cli := mockdocker.NewMockClient(t)
+	cli.EXPECT().ContainerList(mock.Anything, mock.Anything).
+		Return(mobyclient.ContainerListResult{}, nil).Once()
+
 	root := memfs.New()
 	storeFor := func(_ spec.Reference) oras.ReadOnlyTarget { return nil }
 

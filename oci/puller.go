@@ -24,7 +24,12 @@ func NoopPuller() Puller {
 	}
 }
 
-func RemotePuller(opts ...RemoteRepositoryOption) Puller {
+// RemotePuller pulls a bin/runtime binary from a registry, resolving
+// multi-arch indexes against platform — the platform the binary will
+// EXECUTE on (host for the system executor, linux/<arch> for docker),
+// which is why the caller supplies it rather than this package
+// assuming runtime.GOOS.
+func RemotePuller(platform v1.Platform, opts ...RemoteRepositoryOption) Puller {
 	return func(ctx context.Context, ref spec.Reference, w io.Writer) error {
 		repo, err := NewRemoteRepository(ref, opts...)
 		if err != nil {
@@ -41,7 +46,7 @@ func RemotePuller(opts ...RemoteRepositoryOption) Puller {
 			return fmt.Errorf("resolving %s: %w", ref, err)
 		}
 
-		manifest, err := ResolveManifest(ctx, repo, desc)
+		manifest, err := ResolveManifest(ctx, repo, desc, platform)
 		if err != nil {
 			return err
 		}

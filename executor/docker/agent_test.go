@@ -73,24 +73,6 @@ func TestAgent_StopWithoutContainer(t *testing.T) {
 	}
 }
 
-func TestAgent_RanChannelHelpers(t *testing.T) {
-	t.Parallel()
-
-	cli := mockdocker.NewMockClient(t)
-	a := newAgent(agentDeps{client: cli})
-
-	if got := a.getRan(); got != nil {
-		t.Errorf("getRan before setRan should be nil, got %v", got)
-	}
-
-	ch := make(chan struct{})
-	a.setRan(ch)
-
-	if got := a.getRan(); got != ch {
-		t.Errorf("getRan after setRan returned wrong channel")
-	}
-}
-
 func TestAgent_IDLocked(t *testing.T) {
 	t.Parallel()
 
@@ -157,11 +139,11 @@ func TestAgent_StopWithContainer(t *testing.T) {
 	a := newAgent(agentDeps{client: cli})
 	a.containerID = "abc123"
 
-	// Pre-close the ran channel so Stop returns immediately
-	// after ContainerStop without blocking on a real run loop.
+	// A pre-closed ran channel lets Stop return immediately after
+	// ContainerStop without a real run loop.
 	ch := make(chan struct{})
 	close(ch)
-	a.setRan(ch)
+	a.ran = ch
 
 	if err := a.Stop(context.Background()); err != nil {
 		t.Errorf("Stop with container: %v", err)
@@ -172,9 +154,13 @@ func TestAgent_RemoveWithContainer(t *testing.T) {
 	t.Parallel()
 
 	cli := mockdocker.NewMockClient(t)
+	// Remove now stops the container first, then removes it.
+	cli.EXPECT().
+		ContainerStop(mock.Anything, "abc123", mock.Anything).
+		Return(mobyclient.ContainerStopResult{}, nil).Once()
 	cli.EXPECT().
 		ContainerRemove(mock.Anything, "abc123", mock.Anything).
-		Return(mobyclient.ContainerRemoveResult{}, nil)
+		Return(mobyclient.ContainerRemoveResult{}, nil).Once()
 
 	a := newAgent(agentDeps{client: cli})
 	a.containerID = "abc123"

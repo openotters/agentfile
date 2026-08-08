@@ -100,7 +100,7 @@ func TestIsNotFoundErr(t *testing.T) {
 	}{
 		{"nil", nil, false},
 		{"no such image", errors.New("no such image: foo"), true},
-		{"not found", errors.New("Error response from daemon: not found"), true},
+		{"bare not found is not matched", errors.New("Error response from daemon: not found"), false},
 		{"dial refused", errors.New("dial unix: connection refused"), false},
 	}
 

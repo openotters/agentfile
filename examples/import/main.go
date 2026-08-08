@@ -65,7 +65,9 @@ func main() {
 			tag = spec.DefaultTag
 		}
 
-		if _, copyErr := oras.Copy(context.Background(), store, "latest", repo, tag, oras.DefaultCopyOptions); copyErr != nil {
+		// Import tags the store by digest (the artifact may have been
+		// exported from any tag), so the digest is the copy source.
+		if _, copyErr := oras.Copy(context.Background(), store, digest, repo, tag, oras.DefaultCopyOptions); copyErr != nil {
 			fmt.Fprintln(os.Stderr, copyErr)
 			os.Exit(1)
 		}

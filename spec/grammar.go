@@ -14,7 +14,10 @@ var agentfileLexer = lexer.MustStateful(lexer.Rules{ //nolint:gochecknoglobals /
 		{Name: "FileRef", Pattern: `file://[^\s]+`},
 		{Name: "Equals", Pattern: `=`},
 		{Name: "Bang", Pattern: `!`},
-		{Name: "ExecKeyword", Pattern: `EXEC`, Action: lexer.Push("ExecArgs")},
+		// EXEC is only special when opening its bracketed arg list;
+		// the `[` is absorbed into the token so idents that merely
+		// start with EXEC (`NAME EXECUTOR`) lex as plain Ident.
+		{Name: "ExecKeyword", Pattern: `EXEC[ \t]*\[`, Action: lexer.Push("ExecArgs")},
 		{Name: "Ident", Pattern: `[^\s"=!]+`},
 	},
 	"ExecArgs": {
@@ -72,14 +75,18 @@ type binInst struct {
 	Desc  *string `@String?`
 }
 
+// addInst is ADD <src> [<name>] [<description>]. Name is the flat
+// filename the file materialises as under etc/data/; when omitted the
+// parser defaults it to basename(src). Name (Ident) and description
+// (String) never collide — quoting disambiguates.
 type addInst struct {
 	Src  string  `"ADD" @Ident`
-	Dst  string  `@Ident`
+	Name *string `@Ident?`
 	Desc *string `@String?`
 }
 
 type execInst struct {
-	Args []string `"EXEC" "[" @String ( "," @String )* "]"`
+	Args []string `ExecKeyword @String ( "," @String )* "]"`
 }
 
 type labelInst struct {

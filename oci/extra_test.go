@@ -22,7 +22,7 @@ func TestAgentFetcher_Constructable(t *testing.T) {
 func TestRemotePuller_Constructable(t *testing.T) {
 	t.Parallel()
 
-	if RemotePuller() == nil {
+	if RemotePuller(HostPlatform()) == nil {
 		t.Error("RemotePuller returned nil")
 	}
 }

@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -590,14 +589,4 @@ func TestProvider_Registry(t *testing.T) {
 	if r1 != r2 {
 		t.Error("Registry should be cached")
 	}
-}
-
-// makeManifestForCacheTest is a guard against accidental dead code
-// in the test helpers — keeps `fmt` imported even when no other
-// test in this file uses formatted error strings, satisfying
-// gofmt-style "unused import" failures on a future refactor.
-//
-//nolint:unused // explicit retention for test-helper fmt import
-func makeManifestForCacheTest() string {
-	return fmt.Sprintf("manifest-%d", 0)
 }

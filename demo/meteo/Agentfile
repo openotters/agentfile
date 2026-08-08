@@ -37,4 +37,4 @@ Example: .current.temperature_2m
 EOF
 BIN cat ghcr.io/openotters/tools/cat:latest "Read file contents"
 
-ADD cities.json /data/workspace/cities.json "Known cities with lat/lon coordinates"
+ADD cities.json "Known cities with lat/lon coordinates"

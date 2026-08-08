@@ -50,7 +50,7 @@ func buildMaterializeFixture(t *testing.T) (*memory.Store, spec.Reference) {
 				{Name: "SOUL", Content: "Answer concisely."},
 			},
 			Adds: []*spec.Add{
-				{Src: "data.txt", Dst: "/data/data.txt", Description: "sample"},
+				{Src: "data.txt", Name: "data.txt", Description: "sample"},
 			},
 			Bins: []*spec.Bin{
 				{Name: "jq", Image: "ghcr.io/openotters/tools/jq:latest", Description: "JSON"},

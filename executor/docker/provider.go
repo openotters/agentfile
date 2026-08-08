@@ -11,6 +11,7 @@ import (
 	"github.com/go-git/go-billy/v6/osfs"
 	"github.com/go-git/go-billy/v6/util"
 	"github.com/google/uuid"
+	mobyclient "github.com/moby/moby/client"
 	"oras.land/oras-go/v2"
 
 	"github.com/openotters/agentfile/executor"
@@ -62,12 +63,14 @@ type Provider struct {
 // shape as the system executor's equivalents.
 func NewProvider(root billy.Filesystem, storeFor StoreFor, opts ...ProviderOption) (*Provider, error) {
 	p := &Provider{
-		baseImage:    DefaultBaseImage,
-		root:         root,
-		hostFS:       osfs.New("/"),
-		storeFor:     storeFor,
-		ociPuller:    agentoci.RemotePuller(),
-		usageFetcher: agentoci.RemoteUsageFetcher(),
+		baseImage: DefaultBaseImage,
+		root:      root,
+		hostFS:    osfs.New("/"),
+		storeFor:  storeFor,
+		// Binaries run inside Linux containers regardless of the
+		// host OS, so multi-arch refs resolve against linux/<arch>.
+		ociPuller:    agentoci.RemotePuller(agentoci.LinuxPlatform()),
+		usageFetcher: agentoci.RemoteUsageFetcher(agentoci.LinuxPlatform()),
 	}
 
 	for _, opt := range opts {
@@ -150,9 +153,14 @@ func (p *Provider) Load(_ context.Context) ([]executor.Agent, error) {
 	return nil, nil
 }
 
-// Destroy removes all per-agent directories and any container
-// labelled io.openotters.agent.
-func (p *Provider) Destroy(_ context.Context) error {
+// Destroy force-removes every container labelled as an openotters agent and
+// deletes all per-agent directories, so a daemon that restarted (and could not
+// re-adopt running containers, since Load is a stub) leaves nothing behind.
+func (p *Provider) Destroy(ctx context.Context) error {
+	if err := p.removeLabelledContainers(ctx); err != nil {
+		return err
+	}
+
 	entries, err := p.root.ReadDir(".")
 	if err != nil {
 		return fmt.Errorf("docker: reading root: %w", err)
@@ -162,11 +170,34 @@ func (p *Provider) Destroy(_ context.Context) error {
 		if !entry.IsDir() {
 			continue
 		}
+
 		if _, parseErr := uuid.Parse(entry.Name()); parseErr != nil {
 			continue
 		}
+
 		if rmErr := util.RemoveAll(p.root, entry.Name()); rmErr != nil {
 			return fmt.Errorf("docker: removing %s: %w", entry.Name(), rmErr)
+		}
+	}
+
+	return nil
+}
+
+// removeLabelledContainers force-removes every container carrying the agent
+// label, running or stopped.
+func (p *Provider) removeLabelledContainers(ctx context.Context) error {
+	list, err := p.client.ContainerList(ctx, mobyclient.ContainerListOptions{
+		All:     true,
+		Filters: mobyclient.Filters{}.Add("label", labelOpenottersAgent+"="+labelValueTrue),
+	})
+	if err != nil {
+		return fmt.Errorf("docker: listing agent containers: %w", err)
+	}
+
+	for _, c := range list.Items {
+		if _, rmErr := p.client.ContainerRemove(ctx, c.ID, mobyclient.ContainerRemoveOptions{Force: true}); rmErr != nil &&
+			!isNotFoundErr(rmErr) {
+			return fmt.Errorf("docker: removing container %s: %w", c.ID, rmErr)
 		}
 	}
 

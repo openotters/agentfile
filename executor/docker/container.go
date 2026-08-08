@@ -21,16 +21,11 @@ import (
 // agent's view of "/" IS its FHS root — no /agent prefix. Runtime
 // and BIN images mount at /opt/* as before.
 const (
-	// inContainerAgentRoot is the agent's FHS root inside the
-	// container — just "/". Passed as --root to the runtime.
-	inContainerAgentRoot = "/"
-
-	// inContainerWorkspace is the agent's scratch dir / CWD.
+	inContainerAgentRoot = "/" // passed as --root to the runtime
 	inContainerWorkspace = "/workspace"
 
-	// Per-FHS-subdir bind-mount targets. Each maps a top-level
-	// piece of the host agent tree onto the container's matching
-	// FHS path.
+	// FHS bind-mount targets: each maps a piece of the host agent tree onto
+	// the container's matching path.
 	inContainerEtcContext = "/etc/context"
 	inContainerEtcData    = "/etc/data"
 	inContainerAgentfile  = "/etc/Agentfile"
@@ -39,44 +34,18 @@ const (
 	inContainerTmp        = "/tmp"
 	inContainerVarLib     = "/var/lib"
 
-	// inContainerRuntimeDir hosts the runtime image-mount.
-	inContainerRuntimeDir = "/opt/runtime"
+	inContainerRuntimeDir = "/opt/runtime"    // runtime image-mount
+	inContainerBinImages  = "/opt/bin-images" // per-BIN image mounts: /opt/bin-images/<name>/<name>
+	inContainerBinsRoot   = "/opt/bins"       // flat PATH dir of symlinks into inContainerBinImages
 
-	// inContainerBinImages hosts the per-BIN image mounts —
-	// /opt/bin-images/<name>/<name>. Each BIN image's filesystem
-	// (a single binary file at /<name>) lands in its own
-	// subdirectory. Hidden from the model: PATH and tool
-	// invocations go through /opt/bins/<name> symlinks below.
-	inContainerBinImages = "/opt/bin-images"
-
-	// inContainerBinsRoot is the flat directory the model sees in
-	// PATH. Each entry is a symlink → /opt/bin-images/<name>/<name>.
-	// Materialise creates the symlinks on the host side; a
-	// bind-mount surfaces them inside the container so an `ls
-	// /opt/bins` reads as a plain list of executables instead of
-	// the doubled-up <name>/<name> path the raw image mounts
-	// would produce.
-	inContainerBinsRoot = "/opt/bins"
-
-	// inContainerDaemonSocket is the canonical in-container path
-	// where we bind-mount the daemon's unix socket (Linux mode).
-	// Regardless of where the host socket lives, the agent inside
-	// always dials this same path, so OTTERSD_URL is stable.
+	// inContainerDaemonSocket is where the daemon's unix socket is bind-mounted
+	// (Linux mode), so OTTERSD_URL is stable regardless of the host path.
 	inContainerDaemonSocket = "/run/ottersd.sock"
 
-	// agentGRPCPort is the in-container port the runtime serves
-	// gRPC on. Published to the host on a random loopback port.
-	agentGRPCPort = "9999"
+	agentGRPCPort = "9999" // in-container gRPC port, published to a random host loopback port
 
-	// labelOpenottersAgent marks every container the docker
-	// executor creates so cleanup / `docker ps --filter` calls
-	// can find them without depending on the container name.
-	labelOpenottersAgent = "io.openotters.agent"
-
-	// labelValueTrue is the canonical "this label is set" value
-	// — extracted to keep a stricter goconst lint rule happy
-	// when "true" appears in multiple files.
-	labelValueTrue = "true"
+	labelOpenottersAgent = "io.openotters.agent" // marks executor-created containers for cleanup
+	labelValueTrue       = "true"
 )
 
 // containerSpec is the resolved set of arguments needed to call
@@ -89,11 +58,10 @@ type containerSpec struct {
 	// AgentRoot is the host path. agentFHSMounts maps each
 	// top-level subtree onto its matching standard Linux path
 	// inside the container — no /agent prefix.
-	AgentRoot     string
-	RuntimeImage  string
-	BINImages     map[string]string // name → ref
-	UserMounts    []executor.Mount
-	NetworkAccess bool
+	AgentRoot    string
+	RuntimeImage string
+	BINImages    map[string]string // name → ref
+	UserMounts   []executor.Mount
 
 	APIBase  string
 	APIKey   string
@@ -128,25 +96,29 @@ type containerSpec struct {
 	// at runtime.
 	UserEnvs []*spec.Env
 
-	// Configs is the resolved CONFIG map (kebab-case key → string).
-	// Exported on the spawn env as RUNTIME_<UPPER_SNAKE> alongside
-	// the agent.yaml `configs:` block, so subprocess wrappers can
-	// read tunables without re-parsing the YAML.
+	// Exec is the EXEC override; when empty the runtime is invoked with the
+	// default `serve` verb.
+	Exec []string
+
+	// Configs is the resolved CONFIG map (kebab-case key → string), exported
+	// on the spawn env as RUNTIME_<UPPER_SNAKE>.
 	Configs map[string]string
 }
 
-// buildConfig assembles the moby Container.Config for the agent's
-// runtime container. The container's entrypoint is the runtime
-// binary at the image-mount path; argv is `serve --root /
-// --model <model> --addr 0.0.0.0:9999` — the agent's FHS lives
-// directly at the container's filesystem root.
+// buildConfig assembles the Container.Config: the runtime binary as entrypoint
+// with the EXEC verb (default serve) plus the appended --root/--model/--addr
+// flags, spawned in /workspace.
 func (s *containerSpec) buildConfig() *containertypes.Config {
-	args := []string{
-		"serve",
+	args := s.Exec
+	if len(args) == 0 {
+		args = []string{"serve"}
+	}
+
+	args = append(append([]string{}, args...),
 		"--root", inContainerAgentRoot,
 		"--model", s.Model,
-		"--addr", "0.0.0.0:" + agentGRPCPort,
-	}
+		"--addr", "0.0.0.0:"+agentGRPCPort,
+	)
 
 	port, _ := networktypes.ParsePort(agentGRPCPort + "/tcp")
 
@@ -208,30 +180,30 @@ func (s *containerSpec) buildHostConfig() *containertypes.HostConfig {
 		},
 	}
 
-	networkMode := containertypes.NetworkMode("bridge")
-	if !s.NetworkAccess {
-		// We still need bridge networking for the published gRPC
-		// port to work on the host loopback. Restricting outbound
-		// access lands as a follow-up via iptables / network
-		// policies; for now, network access is on by default for
-		// agents.
-		networkMode = containertypes.NetworkMode("bridge")
-	}
-
 	hostCfg := &containertypes.HostConfig{
 		Mounts:       mounts,
 		PortBindings: portBindings,
-		NetworkMode:  networkMode,
+		// Bridge networking is required for the published gRPC port to reach
+		// the host loopback; outbound egress restriction is a deploy-policy
+		// concern the daemon layers on.
+		NetworkMode: containertypes.NetworkMode("bridge"),
+		// Baseline hardening: drop all capabilities, forbid privilege
+		// escalation, and cap process count against fork bombs. Memory/CPU
+		// limits are left to the daemon's deploy policy.
+		CapDrop:     []string{"ALL"},
+		SecurityOpt: []string{"no-new-privileges"},
+		Resources:   containertypes.Resources{PidsLimit: pidsLimit()},
 	}
 
-	// Wire daemon access. Two mutually exclusive shapes:
-	//   - unix socket: bind-mount the host socket into the container.
-	//   - TCP via host.docker.internal: add the ExtraHosts mapping on
-	//     plain Linux Docker (Mac / Colima already provide the name).
-	if _, mount, extraHost := daemonAccess(s.DaemonURL); mount != nil {
-		hostCfg.Mounts = append(hostCfg.Mounts, *mount)
-	} else if extraHost != "" {
-		hostCfg.ExtraHosts = append(hostCfg.ExtraHosts, extraHost)
+	// Wire daemon access only when the full callback pair is present, matching
+	// the env injection's both-or-neither rule: a unix socket bind-mount, or a
+	// host.docker.internal mapping for the TCP shape on plain Linux Docker.
+	if s.DaemonURL != "" && s.AgentToken != "" {
+		if _, mount, extraHost := daemonAccess(s.DaemonURL); mount != nil {
+			hostCfg.Mounts = append(hostCfg.Mounts, *mount)
+		} else if extraHost != "" {
+			hostCfg.ExtraHosts = append(hostCfg.ExtraHosts, extraHost)
+		}
 	}
 
 	return hostCfg
@@ -315,8 +287,11 @@ func (s *containerSpec) buildEnv() []string {
 		}
 	}
 
-	env, _ = executor.AppendUserEnv(env, s.UserEnvs)
+	// CONFIG first, ENV last: on a same-name collision (a deliberate
+	// RUNTIME_*-prefixed ENV vs a CONFIG export) the explicit ENV wins
+	// last-write.
 	env = executor.AppendConfigEnv(env, s.Configs)
+	env, _ = executor.AppendUserEnv(env, s.UserEnvs)
 
 	return env
 }
@@ -329,16 +304,39 @@ func (s *containerSpec) buildEnv() []string {
 // The four /etc entries are mounted individually rather than mounting
 // the whole /etc dir so distroless's /etc/passwd / /etc/group /
 // /etc/ssl/certs stay intact (nonroot user resolution + HTTPS).
+// defaultPidsLimit caps the process count in an agent container to blunt fork
+// bombs while leaving ample headroom for a normal tool workload.
+const defaultPidsLimit = 512
+
+func pidsLimit() *int64 {
+	limit := int64(defaultPidsLimit)
+
+	return &limit
+}
+
 func agentFHSMounts(agentRoot string) []mounttypes.Mount {
+	bind := func(sub, target string, readOnly bool) mounttypes.Mount {
+		return mounttypes.Mount{
+			Type:     mounttypes.TypeBind,
+			Source:   filepath.Join(agentRoot, sub),
+			Target:   target,
+			ReadOnly: readOnly,
+		}
+	}
+	roBind := func(sub, target string) mounttypes.Mount { return bind(sub, target, true) }
+	rwBind := func(sub, target string) mounttypes.Mount { return bind(sub, target, false) }
+
 	return []mounttypes.Mount{
-		{Type: mounttypes.TypeBind, Source: filepath.Join(agentRoot, "etc", "context"), Target: inContainerEtcContext},
-		{Type: mounttypes.TypeBind, Source: filepath.Join(agentRoot, "etc", "data"), Target: inContainerEtcData},
-		{Type: mounttypes.TypeBind, Source: filepath.Join(agentRoot, "etc", "Agentfile"), Target: inContainerAgentfile},
-		{Type: mounttypes.TypeBind, Source: filepath.Join(agentRoot, "etc", "agent.yaml"), Target: inContainerAgentYAML},
-		{Type: mounttypes.TypeBind, Source: filepath.Join(agentRoot, "home"), Target: inContainerHome},
-		{Type: mounttypes.TypeBind, Source: filepath.Join(agentRoot, "tmp"), Target: inContainerTmp},
-		{Type: mounttypes.TypeBind, Source: filepath.Join(agentRoot, "var", "lib"), Target: inContainerVarLib},
-		{Type: mounttypes.TypeBind, Source: filepath.Join(agentRoot, "workspace"), Target: inContainerWorkspace},
+		// Config and context are read-only so a tool-using model cannot
+		// rewrite its own agent.yaml / AGENT.md and persist it.
+		roBind("etc/context", inContainerEtcContext),
+		roBind("etc/data", inContainerEtcData),
+		roBind("etc/Agentfile", inContainerAgentfile),
+		roBind("etc/agent.yaml", inContainerAgentYAML),
+		rwBind("home", inContainerHome),
+		rwBind("tmp", inContainerTmp),
+		rwBind("var/lib", inContainerVarLib),
+		rwBind("workspace", inContainerWorkspace),
 		// /opt/bins on the host carries per-BIN symlinks created by
 		// materialise. Each symlink's target string points at
 		// /opt/bin-images/<name>/<name> — a container-local path that

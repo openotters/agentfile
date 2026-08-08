@@ -84,9 +84,9 @@ type MockProvider_Create_Call struct {
 //   - id uuid.UUID
 //   - ref spec.Reference
 //   - opts ...spec.Override
-func (_e *MockProvider_Expecter) Create(ctx interface{}, id interface{}, ref interface{}, opts ...interface{}) *MockProvider_Create_Call {
+func (_e *MockProvider_Expecter) Create(ctx any, id any, ref any, opts ...any) *MockProvider_Create_Call {
 	return &MockProvider_Create_Call{Call: _e.mock.On("Create",
-		append([]interface{}{ctx, id, ref}, opts...)...)}
+		append([]any{ctx, id, ref}, opts...)...)}
 }
 
 func (_c *MockProvider_Create_Call) Run(run func(ctx context.Context, id uuid.UUID, ref spec.Reference, opts ...spec.Override)) *MockProvider_Create_Call {
@@ -153,7 +153,7 @@ type MockProvider_Destroy_Call struct {
 
 // Destroy is a helper method to define mock.On call
 //   - ctx context.Context
-func (_e *MockProvider_Expecter) Destroy(ctx interface{}) *MockProvider_Destroy_Call {
+func (_e *MockProvider_Expecter) Destroy(ctx any) *MockProvider_Destroy_Call {
 	return &MockProvider_Destroy_Call{Call: _e.mock.On("Destroy", ctx)}
 }
 
@@ -215,7 +215,7 @@ type MockProvider_Load_Call struct {
 
 // Load is a helper method to define mock.On call
 //   - ctx context.Context
-func (_e *MockProvider_Expecter) Load(ctx interface{}) *MockProvider_Load_Call {
+func (_e *MockProvider_Expecter) Load(ctx any) *MockProvider_Load_Call {
 	return &MockProvider_Load_Call{Call: _e.mock.On("Load", ctx)}
 }
 

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/openotters/agentfile/executor"
+	"github.com/openotters/agentfile/spec"
 )
 
 // Exec runs a BIN subprocess against the agent's already-materialized
@@ -31,10 +32,10 @@ import (
 // descriptor populated at initialize time supplies the env. Calling
 // Exec on an un-initialized agent returns an error in ExecResult.Err.
 func (a *Agent) Exec(ctx context.Context, bin string, args []string, stdin string) executor.ExecResult {
-	a.initMu.Lock()
+	a.mu.Lock()
 	rt := a.rt
 	initialized := a.initialized
-	a.initMu.Unlock()
+	a.mu.Unlock()
 
 	if !initialized || rt == nil {
 		return executor.ExecResult{
@@ -46,9 +47,14 @@ func (a *Agent) Exec(ctx context.Context, bin string, args []string, stdin strin
 		return executor.ExecResult{Err: fmt.Errorf("system exec: agent %s has no filesystem", a.id)}
 	}
 
-	// Fail fast when the requested BIN isn't declared in the agent's
-	// tool set. The declared list is the source of truth; the PATH
-	// inside the chroot is whatever materialise puts there.
+	// bin becomes a filesystem path below; reject anything that could
+	// traverse before it is joined onto the agent root.
+	if !spec.IsPathSafeName(bin) {
+		return executor.ExecResult{Err: fmt.Errorf("system exec: %q is not a valid BIN name", bin)}
+	}
+
+	// Fail fast when the requested BIN isn't declared. The declared list is
+	// the source of truth; the chroot PATH is whatever materialise put there.
 	if !systemBinDeclared(rt, bin) {
 		return executor.ExecResult{
 			Err: fmt.Errorf(
@@ -77,7 +83,11 @@ func (a *Agent) Exec(ctx context.Context, bin string, args []string, stdin strin
 
 	cmd := exec.CommandContext(ctx, binPath, args...)
 	cmd.Dir = filepath.Join(rootDir, "workspace")
+	// Build the env under mu: it reads rt.APIBase/APIKey (mutated by
+	// reresolveCredentials) and the daemon token (mutated by SetAgentToken).
+	a.mu.Lock()
 	cmd.Env = buildCmdEnv(rt, rootDir, a.daemonURL, a.agentToken)
+	a.mu.Unlock()
 
 	// Setpgid puts the child in its own pgid (== child PID). Cancel
 	// path below sends SIGKILL to -pgid so children of `sh -c …` die.

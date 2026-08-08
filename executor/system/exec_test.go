@@ -1,4 +1,4 @@
-//nolint:testpackage // direct internal access
+//nolint:testpackage // direct internal access to process/Cmd internals
 package system
 
 import (
@@ -17,30 +17,28 @@ import (
 	"github.com/openotters/agentfile/executor"
 )
 
-// --- hand-written stubs -------------------------------------------------
-
-// Mockery-generated mocks live in mocks/system/ which imports
-// executor/system, so tests inside package system can't use them (import
-// cycle). For internal tests we hand-write tiny stubs — mockery is
-// still the story for downstream consumers, but here we need direct
-// access to `process` internals.
-
+// stubCmd is a hand-written Cmd for exercising process internals. Mockery's
+// generated mocks import executor/system, so package-internal tests can't use
+// them without an import cycle.
 type stubCmd struct {
-	mu       sync.Mutex
-	stdout   io.Writer
-	stderr   io.Writer
-	env      []string
-	dir      string
-	startFn  func() error
-	waitFn   func() error
-	signals  []os.Signal
-	signalFn func(os.Signal) error
+	mu          sync.Mutex
+	stdout      io.Writer
+	stderr      io.Writer
+	env         []string
+	dir         string
+	startFn     func() error
+	waitFn      func() error
+	signals     []os.Signal
+	signalFn    func(os.Signal) error
+	killed      bool
+	killRelease chan struct{}
 }
 
 func (s *stubCmd) Start() error {
 	if s.startFn != nil {
 		return s.startFn()
 	}
+
 	return nil
 }
 
@@ -48,6 +46,7 @@ func (s *stubCmd) Wait() error {
 	if s.waitFn != nil {
 		return s.waitFn()
 	}
+
 	return nil
 }
 
@@ -64,6 +63,19 @@ func (s *stubCmd) Signal(sig os.Signal) error {
 	return nil
 }
 
+func (s *stubCmd) Kill() error {
+	s.mu.Lock()
+	s.killed = true
+	release := s.killRelease
+	s.mu.Unlock()
+
+	if release != nil {
+		close(release)
+	}
+
+	return nil
+}
+
 func (s *stubCmd) SetStdout(w io.Writer) { s.stdout = w }
 func (s *stubCmd) SetStderr(w io.Writer) { s.stderr = w }
 func (s *stubCmd) SetEnv(env []string)   { s.env = env }
@@ -72,9 +84,15 @@ func (s *stubCmd) SetDir(dir string)     { s.dir = dir }
 func (s *stubCmd) signalsSent() []os.Signal {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make([]os.Signal, len(s.signals))
-	copy(out, s.signals)
-	return out
+
+	return append([]os.Signal(nil), s.signals...)
+}
+
+func (s *stubCmd) wasKilled() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.killed
 }
 
 type stubSpawner struct {
@@ -89,20 +107,32 @@ type stubCall struct {
 
 func (s *stubSpawner) Command(name string, args ...string) Cmd {
 	s.calls = append(s.calls, stubCall{name: name, args: append([]string{}, args...)})
+
 	return s.cmd
 }
 
-// --- defaultSpawner / osCmd --------------------------------------------
+func newTestProcess(cmd *stubCmd) (*process, *stubSpawner) {
+	sp := &stubSpawner{cmd: cmd}
 
-func TestDefaultSpawner_SignalBeforeStartErrors(t *testing.T) {
+	return &process{spawner: sp, stdout: io.Discard, stderr: io.Discard}, sp
+}
+
+// newTestRT returns a minimal Runtime whose argv is `serve --root /r --model m`.
+func newTestRT() *executor.Runtime {
+	return &executor.Runtime{ResolvedConfig: executor.ResolvedConfig{Model: "m"}}
+}
+
+func TestDefaultSpawner_SignalAndKillBeforeStartError(t *testing.T) {
 	t.Parallel()
 
 	c := defaultSpawner{}.Command("/bin/true")
 
-	// Before Start, .Process is nil. Signal must return an error, not
-	// panic with a nil deref.
 	if err := c.Signal(os.Interrupt); err == nil {
-		t.Fatal("Signal(before Start) = nil, want error")
+		t.Error("Signal before Start = nil, want error")
+	}
+
+	if err := c.Kill(); err == nil {
+		t.Error("Kill before Start = nil, want error")
 	}
 }
 
@@ -127,47 +157,34 @@ func TestDefaultSpawner_WritesStdoutStderr(t *testing.T) {
 		t.Fatalf("Wait: %v", err)
 	}
 
-	if !strings.Contains(out.String(), "hi") {
-		t.Fatalf("stdout = %q, want 'hi'", out.String())
-	}
-
-	if !strings.Contains(errb.String(), "oops") {
-		t.Fatalf("stderr = %q, want 'oops'", errb.String())
+	if !strings.Contains(out.String(), "hi") || !strings.Contains(errb.String(), "oops") {
+		t.Fatalf("stdout=%q stderr=%q", out.String(), errb.String())
 	}
 }
 
-// --- process.serve via stubs --------------------------------------------
-
-func TestProcessServe_HappyPath(t *testing.T) {
+func TestProcessCommand_BuildsArgvAndWiresStdio(t *testing.T) {
 	t.Parallel()
 
 	cmd := &stubCmd{}
-	execer := &stubSpawner{cmd: cmd}
+	p, sp := newTestProcess(cmd)
 
-	p := &process{spawner: execer, stdout: io.Discard, stderr: io.Discard}
+	built := p.command(newTestRT(), "/r", "", "")
 
-	if err := p.serve(context.Background(), p.buildCmdFn(newTestRT(), "/r", "", "")); err != nil {
-		t.Fatalf("serve: %v", err)
+	if built != cmd {
+		t.Fatal("command did not return the spawner's cmd")
 	}
 
-	// Command was built with the expected runtime path + argv.
-	if len(execer.calls) != 1 {
-		t.Fatalf("spawner.Command calls = %d, want 1", len(execer.calls))
+	if len(sp.calls) != 1 || sp.calls[0].name != "/r/usr/local/bin/runtime" {
+		t.Fatalf("spawn call = %+v", sp.calls)
 	}
 
-	call := execer.calls[0]
-	if call.name != "/r/usr/local/bin/runtime" {
-		t.Fatalf("Command name = %q, want /r/usr/local/bin/runtime", call.name)
+	want := []string{"serve", "--root", "/r", "--model", "m"}
+	if !reflect.DeepEqual(sp.calls[0].args, want) {
+		t.Fatalf("args = %q, want %q", sp.calls[0].args, want)
 	}
 
-	wantArgs := []string{"serve", "--root", "/r", "--model", "m"}
-	if !reflect.DeepEqual(call.args, wantArgs) {
-		t.Fatalf("Command args = %q, want %q", call.args, wantArgs)
-	}
-
-	// stdout/stderr were wired from process to the cmd.
 	if cmd.stdout != io.Discard || cmd.stderr != io.Discard {
-		t.Fatalf("SetStdout/SetStderr not called")
+		t.Fatal("stdio not wired onto the cmd")
 	}
 }
 
@@ -175,19 +192,11 @@ func TestProcessServe_StartError(t *testing.T) {
 	t.Parallel()
 
 	startErr := errors.New("binary not found")
+	p, _ := newTestProcess(&stubCmd{startFn: func() error { return startErr }})
 
-	cmd := &stubCmd{startFn: func() error { return startErr }}
-	execer := &stubSpawner{cmd: cmd}
-
-	p := &process{spawner: execer, stdout: io.Discard, stderr: io.Discard}
-
-	err := p.serve(context.Background(), p.buildCmdFn(newTestRT(), "/r", "", ""))
-	if err == nil || !strings.Contains(err.Error(), "starting runtime") {
-		t.Fatalf("serve err = %v, want wrapped 'starting runtime'", err)
-	}
-
-	if !errors.Is(err, startErr) {
-		t.Fatalf("inner error not propagated: %v", err)
+	err := p.serve(context.Background(), p.command(newTestRT(), "/r", "", ""))
+	if err == nil || !strings.Contains(err.Error(), "starting runtime") || !errors.Is(err, startErr) {
+		t.Fatalf("serve err = %v, want wrapped start error", err)
 	}
 }
 
@@ -195,114 +204,62 @@ func TestProcessServe_ExitErrorPropagates(t *testing.T) {
 	t.Parallel()
 
 	exitErr := errors.New("exit status 42")
+	p, _ := newTestProcess(&stubCmd{waitFn: func() error { return exitErr }})
 
-	cmd := &stubCmd{waitFn: func() error { return exitErr }}
-	execer := &stubSpawner{cmd: cmd}
-
-	p := &process{spawner: execer, stdout: io.Discard, stderr: io.Discard}
-
-	if err := p.serve(context.Background(), p.buildCmdFn(newTestRT(), "/r", "", "")); !errors.Is(err, exitErr) {
+	if err := p.serve(context.Background(), p.command(newTestRT(), "/r", "", "")); !errors.Is(err, exitErr) {
 		t.Fatalf("serve err = %v, want %v", err, exitErr)
 	}
 }
 
-func TestProcessServe_CtxCancelSignalsThenWaits(t *testing.T) {
+func TestShutdown_CleanExitOnSignal(t *testing.T) {
 	t.Parallel()
 
-	// Wait blocks on a channel until the stub's Signal is delivered —
-	// this lets us assert that ctx cancellation drives Signal first,
-	// then the wait unblocks (mimicking a well-behaved subprocess that
-	// exits on SIGINT).
+	// A well-behaved runtime exits on SIGINT before the grace elapses.
 	waitBlock := make(chan error, 1)
-
 	cmd := &stubCmd{
-		waitFn: func() error { return <-waitBlock },
-		signalFn: func(_ os.Signal) error {
-			waitBlock <- nil
-			return nil
-		},
+		waitFn:   func() error { return <-waitBlock },
+		signalFn: func(os.Signal) error { waitBlock <- nil; return nil },
 	}
-	execer := &stubSpawner{cmd: cmd}
-
-	p := &process{spawner: execer, stdout: io.Discard, stderr: io.Discard}
-
-	ctx, cancel := context.WithCancel(context.Background())
 
 	done := make(chan error, 1)
-	go func() { done <- p.serve(ctx, p.buildCmdFn(newTestRT(), "/r", "", "")) }()
+	go func() { done <- cmd.Wait() }()
 
-	// Let serve register p.cmd + spawn the Wait goroutine.
-	time.Sleep(20 * time.Millisecond)
-	cancel()
-
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("serve err = %v, want nil (clean SIGINT + clean Wait)", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("serve did not return after ctx cancel")
+	if err := shutdown(cmd, done, time.Second); err != nil {
+		t.Fatalf("shutdown err = %v", err)
 	}
 
-	sigs := cmd.signalsSent()
-	if len(sigs) != 1 || sigs[0] != os.Interrupt {
-		t.Fatalf("signals sent = %v, want [os.Interrupt]", sigs)
+	if sigs := cmd.signalsSent(); len(sigs) != 1 || sigs[0] != os.Interrupt {
+		t.Fatalf("signals = %v, want [Interrupt]", sigs)
+	}
+
+	if cmd.wasKilled() {
+		t.Error("clean exit should not escalate to Kill")
 	}
 }
 
-// --- process.signal / stop ----------------------------------------------
-
-func TestProcessSignal_SignalErrorEscalatesToKill(t *testing.T) {
+func TestShutdown_EscalatesToKillAfterGrace(t *testing.T) {
 	t.Parallel()
 
+	// A runtime that ignores SIGINT stays blocked in Wait until Kill releases
+	// it, mimicking SIGKILL reaping the process group.
+	release := make(chan struct{})
 	cmd := &stubCmd{
-		signalFn: func(sig os.Signal) error {
-			if sig == os.Interrupt {
-				return errors.New("no such process")
-			}
-			return nil
-		},
+		killRelease: release,
+		waitFn:      func() error { <-release; return nil },
 	}
 
-	p := &process{cmd: cmd}
-	p.signal()
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
 
-	sigs := cmd.signalsSent()
-	if len(sigs) != 2 || sigs[0] != os.Interrupt || sigs[1] != os.Kill {
-		t.Fatalf("signals = %v, want [Interrupt, Kill]", sigs)
+	if err := shutdown(cmd, done, 10*time.Millisecond); err != nil {
+		t.Fatalf("shutdown err = %v", err)
 	}
-}
 
-func TestProcessSignal_NilCmdIsNoop(t *testing.T) {
-	t.Parallel()
-
-	p := &process{cmd: nil}
-	p.signal() // must not panic
-}
-
-func TestProcessStop(t *testing.T) {
-	t.Parallel()
-
-	// nil cancel → no-op, no panic.
-	(&process{}).stop()
-
-	// Non-nil cancel gets invoked.
-	called := false
-	p := &process{cancel: func() { called = true }}
-	p.stop()
-
-	if !called {
-		t.Fatal("stop() did not invoke cancel")
+	if !cmd.wasKilled() {
+		t.Error("wedged runtime was not force-killed after grace")
 	}
-}
 
-// --- helper -------------------------------------------------------------
-
-// newTestRT returns a minimal Runtime whose buildCmdArgs output is
-// `serve --root /r --model m`, so every stub expectation can reuse the
-// same argv literal.
-func newTestRT() *executor.Runtime {
-	return &executor.Runtime{
-		ResolvedConfig: executor.ResolvedConfig{Model: "m"},
+	if sigs := cmd.signalsSent(); len(sigs) != 1 || sigs[0] != os.Interrupt {
+		t.Fatalf("signals = %v, want [Interrupt] before Kill", sigs)
 	}
 }

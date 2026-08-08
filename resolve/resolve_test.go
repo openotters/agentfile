@@ -3,6 +3,7 @@ package resolve_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/openotters/agentfile/resolve"
@@ -295,5 +296,113 @@ func TestResolve_ParentNotFound(t *testing.T) {
 	_, err := resolve.Resolve(context.Background(), child, fetch)
 	if err == nil {
 		t.Fatal("expected error for missing parent")
+	}
+}
+
+func TestResolve_ExecAndEnvInheritance(t *testing.T) {
+	t.Parallel()
+
+	parent := &spec.Agentfile{Agent: &spec.Agent{
+		From: "scratch",
+		Exec: []string{"serve", "--parent"},
+		Envs: []*spec.Env{
+			{Key: "LOG_LEVEL", Value: "info"},
+			{Key: "NODE_ENV", Value: "production"},
+		},
+	}}
+
+	fetch := staticFetcher(map[string]*spec.Agentfile{"ghcr.io/openotters/base:v1": parent})
+
+	t.Run("child without EXEC/ENV inherits parent's", func(t *testing.T) {
+		t.Parallel()
+
+		child := &spec.Agentfile{Agent: &spec.Agent{From: "ghcr.io/openotters/base:v1"}}
+
+		got, err := resolve.Resolve(context.Background(), child, fetch)
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+
+		if len(got.Agent.Exec) != 2 || got.Agent.Exec[1] != "--parent" {
+			t.Errorf("exec = %v, want parent's [serve --parent]", got.Agent.Exec)
+		}
+
+		if len(got.Agent.Envs) != 2 {
+			t.Errorf("envs = %d entries, want parent's 2", len(got.Agent.Envs))
+		}
+	})
+
+	t.Run("child EXEC replaces, child ENV appends", func(t *testing.T) {
+		t.Parallel()
+
+		child := &spec.Agentfile{Agent: &spec.Agent{
+			From: "ghcr.io/openotters/base:v1",
+			Exec: []string{"serve", "--child"},
+			Envs: []*spec.Env{{Key: "LOG_LEVEL", Value: "debug"}},
+		}}
+
+		got, err := resolve.Resolve(context.Background(), child, fetch)
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+
+		if len(got.Agent.Exec) != 2 || got.Agent.Exec[1] != "--child" {
+			t.Errorf("exec = %v, want child's [serve --child]", got.Agent.Exec)
+		}
+
+		// Append at the spec level: parent's two + child's one, child last
+		// so the spawn-time keyed-merge makes LOG_LEVEL=debug win.
+		if len(got.Agent.Envs) != 3 {
+			t.Fatalf("envs = %d entries, want 3 (append)", len(got.Agent.Envs))
+		}
+
+		last := got.Agent.Envs[2]
+		if last.Key != "LOG_LEVEL" || last.Value != "debug" {
+			t.Errorf("last env = %s=%s, want child's LOG_LEVEL=debug", last.Key, last.Value)
+		}
+	})
+}
+
+func TestResolve_InheritedRequiredConfigSatisfiedByChild(t *testing.T) {
+	t.Parallel()
+
+	parent := &spec.Agentfile{Agent: &spec.Agent{
+		From:    "scratch",
+		Configs: []*spec.Config{{Key: "webhook-url", Required: true}},
+	}}
+	child := &spec.Agentfile{Agent: &spec.Agent{
+		From:    "ghcr.io/openotters/base:v1",
+		Configs: []*spec.Config{{Key: "webhook-url", Value: "https://example.com"}},
+	}}
+
+	fetch := staticFetcher(map[string]*spec.Agentfile{"ghcr.io/openotters/base:v1": parent})
+
+	got, err := resolve.Resolve(context.Background(), child, fetch)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	if reqErr := spec.RequiredConfigsProvided(got.Agent.Configs); reqErr != nil {
+		t.Errorf("child value should satisfy parent's required config: %v", reqErr)
+	}
+}
+
+func TestResolve_Cycle(t *testing.T) {
+	t.Parallel()
+
+	// a inherits from b, b inherits from a — the chain loops.
+	a := &spec.Agentfile{Agent: &spec.Agent{From: "registry.local/agents/b:latest"}}
+	b := &spec.Agentfile{Agent: &spec.Agent{From: "registry.local/agents/a:latest"}}
+
+	fetch := staticFetcher(map[string]*spec.Agentfile{
+		"registry.local/agents/a:latest": a,
+		"registry.local/agents/b:latest": b,
+	})
+
+	start := &spec.Agentfile{Agent: &spec.Agent{From: "registry.local/agents/a:latest"}}
+
+	_, err := resolve.Resolve(context.Background(), start, fetch)
+	if err == nil || !strings.Contains(err.Error(), "inheritance cycle") {
+		t.Fatalf("expected cycle error, got %v", err)
 	}
 }

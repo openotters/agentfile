@@ -118,7 +118,7 @@ type MockClient_ContainerAttach_Call struct {
 //   - ctx context.Context
 //   - id string
 //   - opts client.ContainerAttachOptions
-func (_e *MockClient_Expecter) ContainerAttach(ctx interface{}, id interface{}, opts interface{}) *MockClient_ContainerAttach_Call {
+func (_e *MockClient_Expecter) ContainerAttach(ctx any, id any, opts any) *MockClient_ContainerAttach_Call {
 	return &MockClient_ContainerAttach_Call{Call: _e.mock.On("ContainerAttach", ctx, id, opts)}
 }
 
@@ -189,7 +189,7 @@ type MockClient_ContainerCreate_Call struct {
 // ContainerCreate is a helper method to define mock.On call
 //   - ctx context.Context
 //   - opts client.ContainerCreateOptions
-func (_e *MockClient_Expecter) ContainerCreate(ctx interface{}, opts interface{}) *MockClient_ContainerCreate_Call {
+func (_e *MockClient_Expecter) ContainerCreate(ctx any, opts any) *MockClient_ContainerCreate_Call {
 	return &MockClient_ContainerCreate_Call{Call: _e.mock.On("ContainerCreate", ctx, opts)}
 }
 
@@ -256,7 +256,7 @@ type MockClient_ContainerInspect_Call struct {
 //   - ctx context.Context
 //   - id string
 //   - opts client.ContainerInspectOptions
-func (_e *MockClient_Expecter) ContainerInspect(ctx interface{}, id interface{}, opts interface{}) *MockClient_ContainerInspect_Call {
+func (_e *MockClient_Expecter) ContainerInspect(ctx any, id any, opts any) *MockClient_ContainerInspect_Call {
 	return &MockClient_ContainerInspect_Call{Call: _e.mock.On("ContainerInspect", ctx, id, opts)}
 }
 
@@ -327,7 +327,7 @@ type MockClient_ContainerList_Call struct {
 // ContainerList is a helper method to define mock.On call
 //   - ctx context.Context
 //   - opts client.ContainerListOptions
-func (_e *MockClient_Expecter) ContainerList(ctx interface{}, opts interface{}) *MockClient_ContainerList_Call {
+func (_e *MockClient_Expecter) ContainerList(ctx any, opts any) *MockClient_ContainerList_Call {
 	return &MockClient_ContainerList_Call{Call: _e.mock.On("ContainerList", ctx, opts)}
 }
 
@@ -396,7 +396,7 @@ type MockClient_ContainerLogs_Call struct {
 //   - ctx context.Context
 //   - id string
 //   - opts client.ContainerLogsOptions
-func (_e *MockClient_Expecter) ContainerLogs(ctx interface{}, id interface{}, opts interface{}) *MockClient_ContainerLogs_Call {
+func (_e *MockClient_Expecter) ContainerLogs(ctx any, id any, opts any) *MockClient_ContainerLogs_Call {
 	return &MockClient_ContainerLogs_Call{Call: _e.mock.On("ContainerLogs", ctx, id, opts)}
 }
 
@@ -468,7 +468,7 @@ type MockClient_ContainerRemove_Call struct {
 //   - ctx context.Context
 //   - id string
 //   - opts client.ContainerRemoveOptions
-func (_e *MockClient_Expecter) ContainerRemove(ctx interface{}, id interface{}, opts interface{}) *MockClient_ContainerRemove_Call {
+func (_e *MockClient_Expecter) ContainerRemove(ctx any, id any, opts any) *MockClient_ContainerRemove_Call {
 	return &MockClient_ContainerRemove_Call{Call: _e.mock.On("ContainerRemove", ctx, id, opts)}
 }
 
@@ -540,7 +540,7 @@ type MockClient_ContainerStart_Call struct {
 //   - ctx context.Context
 //   - id string
 //   - opts client.ContainerStartOptions
-func (_e *MockClient_Expecter) ContainerStart(ctx interface{}, id interface{}, opts interface{}) *MockClient_ContainerStart_Call {
+func (_e *MockClient_Expecter) ContainerStart(ctx any, id any, opts any) *MockClient_ContainerStart_Call {
 	return &MockClient_ContainerStart_Call{Call: _e.mock.On("ContainerStart", ctx, id, opts)}
 }
 
@@ -612,7 +612,7 @@ type MockClient_ContainerStop_Call struct {
 //   - ctx context.Context
 //   - id string
 //   - opts client.ContainerStopOptions
-func (_e *MockClient_Expecter) ContainerStop(ctx interface{}, id interface{}, opts interface{}) *MockClient_ContainerStop_Call {
+func (_e *MockClient_Expecter) ContainerStop(ctx any, id any, opts any) *MockClient_ContainerStop_Call {
 	return &MockClient_ContainerStop_Call{Call: _e.mock.On("ContainerStop", ctx, id, opts)}
 }
 
@@ -690,9 +690,9 @@ type MockClient_ImageInspect_Call struct {
 //   - ctx context.Context
 //   - imageID string
 //   - opts ...client.ImageInspectOption
-func (_e *MockClient_Expecter) ImageInspect(ctx interface{}, imageID interface{}, opts ...interface{}) *MockClient_ImageInspect_Call {
+func (_e *MockClient_Expecter) ImageInspect(ctx any, imageID any, opts ...any) *MockClient_ImageInspect_Call {
 	return &MockClient_ImageInspect_Call{Call: _e.mock.On("ImageInspect",
-		append([]interface{}{ctx, imageID}, opts...)...)}
+		append([]any{ctx, imageID}, opts...)...)}
 }
 
 func (_c *MockClient_ImageInspect_Call) Run(run func(ctx context.Context, imageID string, opts ...client.ImageInspectOption)) *MockClient_ImageInspect_Call {
@@ -764,7 +764,7 @@ type MockClient_ImageList_Call struct {
 // ImageList is a helper method to define mock.On call
 //   - ctx context.Context
 //   - opts client.ImageListOptions
-func (_e *MockClient_Expecter) ImageList(ctx interface{}, opts interface{}) *MockClient_ImageList_Call {
+func (_e *MockClient_Expecter) ImageList(ctx any, opts any) *MockClient_ImageList_Call {
 	return &MockClient_ImageList_Call{Call: _e.mock.On("ImageList", ctx, opts)}
 }
 
@@ -839,9 +839,9 @@ type MockClient_ImageLoad_Call struct {
 //   - ctx context.Context
 //   - input io.Reader
 //   - opts ...client.ImageLoadOption
-func (_e *MockClient_Expecter) ImageLoad(ctx interface{}, input interface{}, opts ...interface{}) *MockClient_ImageLoad_Call {
+func (_e *MockClient_Expecter) ImageLoad(ctx any, input any, opts ...any) *MockClient_ImageLoad_Call {
 	return &MockClient_ImageLoad_Call{Call: _e.mock.On("ImageLoad",
-		append([]interface{}{ctx, input}, opts...)...)}
+		append([]any{ctx, input}, opts...)...)}
 }
 
 func (_c *MockClient_ImageLoad_Call) Run(run func(ctx context.Context, input io.Reader, opts ...client.ImageLoadOption)) *MockClient_ImageLoad_Call {
@@ -916,7 +916,7 @@ type MockClient_ImagePull_Call struct {
 //   - ctx context.Context
 //   - ref string
 //   - opts client.ImagePullOptions
-func (_e *MockClient_Expecter) ImagePull(ctx interface{}, ref interface{}, opts interface{}) *MockClient_ImagePull_Call {
+func (_e *MockClient_Expecter) ImagePull(ctx any, ref any, opts any) *MockClient_ImagePull_Call {
 	return &MockClient_ImagePull_Call{Call: _e.mock.On("ImagePull", ctx, ref, opts)}
 }
 
@@ -990,7 +990,7 @@ type MockClient_ImagePush_Call struct {
 //   - ctx context.Context
 //   - ref string
 //   - opts client.ImagePushOptions
-func (_e *MockClient_Expecter) ImagePush(ctx interface{}, ref interface{}, opts interface{}) *MockClient_ImagePush_Call {
+func (_e *MockClient_Expecter) ImagePush(ctx any, ref any, opts any) *MockClient_ImagePush_Call {
 	return &MockClient_ImagePush_Call{Call: _e.mock.On("ImagePush", ctx, ref, opts)}
 }
 
@@ -1062,7 +1062,7 @@ type MockClient_ImageRemove_Call struct {
 //   - ctx context.Context
 //   - imageID string
 //   - opts client.ImageRemoveOptions
-func (_e *MockClient_Expecter) ImageRemove(ctx interface{}, imageID interface{}, opts interface{}) *MockClient_ImageRemove_Call {
+func (_e *MockClient_Expecter) ImageRemove(ctx any, imageID any, opts any) *MockClient_ImageRemove_Call {
 	return &MockClient_ImageRemove_Call{Call: _e.mock.On("ImageRemove", ctx, imageID, opts)}
 }
 
@@ -1142,9 +1142,9 @@ type MockClient_ImageSave_Call struct {
 //   - ctx context.Context
 //   - imageIDs []string
 //   - opts ...client.ImageSaveOption
-func (_e *MockClient_Expecter) ImageSave(ctx interface{}, imageIDs interface{}, opts ...interface{}) *MockClient_ImageSave_Call {
+func (_e *MockClient_Expecter) ImageSave(ctx any, imageIDs any, opts ...any) *MockClient_ImageSave_Call {
 	return &MockClient_ImageSave_Call{Call: _e.mock.On("ImageSave",
-		append([]interface{}{ctx, imageIDs}, opts...)...)}
+		append([]any{ctx, imageIDs}, opts...)...)}
 }
 
 func (_c *MockClient_ImageSave_Call) Run(run func(ctx context.Context, imageIDs []string, opts ...client.ImageSaveOption)) *MockClient_ImageSave_Call {
@@ -1216,7 +1216,7 @@ type MockClient_ImageTag_Call struct {
 // ImageTag is a helper method to define mock.On call
 //   - ctx context.Context
 //   - opts client.ImageTagOptions
-func (_e *MockClient_Expecter) ImageTag(ctx interface{}, opts interface{}) *MockClient_ImageTag_Call {
+func (_e *MockClient_Expecter) ImageTag(ctx any, opts any) *MockClient_ImageTag_Call {
 	return &MockClient_ImageTag_Call{Call: _e.mock.On("ImageTag", ctx, opts)}
 }
 
@@ -1282,7 +1282,7 @@ type MockClient_Info_Call struct {
 // Info is a helper method to define mock.On call
 //   - ctx context.Context
 //   - opts client.InfoOptions
-func (_e *MockClient_Expecter) Info(ctx interface{}, opts interface{}) *MockClient_Info_Call {
+func (_e *MockClient_Expecter) Info(ctx any, opts any) *MockClient_Info_Call {
 	return &MockClient_Info_Call{Call: _e.mock.On("Info", ctx, opts)}
 }
 
@@ -1348,7 +1348,7 @@ type MockClient_ServerVersion_Call struct {
 // ServerVersion is a helper method to define mock.On call
 //   - ctx context.Context
 //   - opts client.ServerVersionOptions
-func (_e *MockClient_Expecter) ServerVersion(ctx interface{}, opts interface{}) *MockClient_ServerVersion_Call {
+func (_e *MockClient_Expecter) ServerVersion(ctx any, opts any) *MockClient_ServerVersion_Call {
 	return &MockClient_ServerVersion_Call{Call: _e.mock.On("ServerVersion", ctx, opts)}
 }
 

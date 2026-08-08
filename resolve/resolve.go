@@ -4,20 +4,24 @@
 // The pipeline is: parse → resolve → build → execute.
 //
 // FROM scratch is a no-op. FROM <ref> pulls the parent, recursively resolves
-// its own FROM, then merges according to the inheritance rules:
+// its own FROM, then merges according to the spec's inheritance table
+// (AGENTFILE-v1.0.0.md, Merge Semantics):
 //
-//   - RUNTIME: child overrides parent, clears configs
-//   - MODEL, NAME: child overrides parent
-//   - CONTEXT: same-name overrides parent, new names appended
-//   - CONFIG: appended (cleared if child sets RUNTIME)
-//   - BIN: appended
-//   - ADD: appended
-//   - LABEL: merged (child wins on key conflicts)
+//   - RUNTIME: replace; if the child sets it, all parent CONFIGs are dropped
+//   - MODEL, NAME, EXEC: replace
+//   - CONTEXT: keyed-merge by name
+//   - CONFIG: append (dropped entirely if child sets RUNTIME)
+//   - BIN, ADD, ENV: append
+//   - LABEL, ARG: keyed-merge (child wins)
+//   - CAPABILITY: set-union
+//
+// The parent chain must be acyclic; a repeated ref is a resolve error.
 package resolve
 
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/openotters/agentfile/spec"
 )
@@ -29,25 +33,41 @@ type Fetcher func(ctx context.Context, ref spec.Reference) (*spec.Agentfile, err
 
 // Resolve resolves FROM inheritance. If af.Agent.From is "scratch", the Agentfile is
 // returned as-is. Otherwise, the parent is fetched, recursively resolved, and merged.
+// A cycle in the parent chain is an error.
 func Resolve(ctx context.Context, af *spec.Agentfile, fetch Fetcher) (*spec.Agentfile, error) {
-	return resolveDepth(ctx, af, fetch, 0)
+	return resolveDepth(ctx, af, fetch, 0, nil)
 }
 
-func resolveDepth(ctx context.Context, af *spec.Agentfile, fetch Fetcher, depth int) (*spec.Agentfile, error) {
+func resolveDepth(
+	ctx context.Context, af *spec.Agentfile, fetch Fetcher, depth int, chain []string,
+) (*spec.Agentfile, error) {
 	if depth > maxDepth {
-		return nil, fmt.Errorf("FROM inheritance depth exceeds %d (circular reference?)", maxDepth)
+		return nil, fmt.Errorf("FROM inheritance depth exceeds %d", maxDepth)
 	}
 
 	if af.Agent.From == "" || af.Agent.From == "scratch" {
 		return af, nil
 	}
 
-	parent, err := fetch(ctx, spec.ParseReference(af.Agent.From))
+	// Detect cycles by normalized ref before fetching: a ref already on
+	// the chain means the ancestry loops back on itself.
+	ref := spec.ParseReference(af.Agent.From)
+	normalized := ref.String()
+
+	for _, seen := range chain {
+		if seen == normalized {
+			return nil, fmt.Errorf(
+				"inheritance cycle: %s", strings.Join(append(chain, normalized), " -> "),
+			)
+		}
+	}
+
+	parent, err := fetch(ctx, ref)
 	if err != nil {
 		return nil, fmt.Errorf("pulling parent %s: %w", af.Agent.From, err)
 	}
 
-	parent, err = resolveDepth(ctx, parent, fetch, depth+1)
+	parent, err = resolveDepth(ctx, parent, fetch, depth+1, append(chain, normalized))
 	if err != nil {
 		return nil, err
 	}
@@ -92,6 +112,12 @@ func mergeAgent(parent, child *spec.Agent) *spec.Agent {
 		merged.Name = child.Name
 	}
 
+	// Exec: replace — the child's invocation wins entirely when set.
+	merged.Exec = parent.Exec
+	if len(child.Exec) > 0 {
+		merged.Exec = child.Exec
+	}
+
 	// Contexts: same-name overrides, new names appended
 	merged.Contexts = mergeContexts(parent.Contexts, child.Contexts)
 
@@ -107,6 +133,10 @@ func mergeAgent(parent, child *spec.Agent) *spec.Agent {
 
 	// Adds: appended
 	merged.Adds = append(cloneAdds(parent.Adds), child.Adds...)
+
+	// Envs: appended — flattened by keyed-merge (last wins) at spawn,
+	// so the child's same-key declaration overrides the parent's there.
+	merged.Envs = append(cloneEnvs(parent.Envs), child.Envs...)
 
 	// Labels: merged, child wins
 	for k, v := range parent.Labels {
@@ -208,6 +238,17 @@ func cloneAdds(adds []*spec.Add) []*spec.Add {
 
 	out := make([]*spec.Add, len(adds))
 	copy(out, adds)
+
+	return out
+}
+
+func cloneEnvs(envs []*spec.Env) []*spec.Env {
+	if envs == nil {
+		return nil
+	}
+
+	out := make([]*spec.Env, len(envs))
+	copy(out, envs)
 
 	return out
 }

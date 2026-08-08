@@ -40,7 +40,7 @@ func buildFixture(t *testing.T) (*memory.Store, spec.Reference) {
 				{Name: "SOUL", Content: "You answer in one word."},
 			},
 			Adds: []*spec.Add{
-				{Src: "data.txt", Dst: "/data/data.txt", Description: "sample data"},
+				{Src: "data.txt", Name: "data.txt", Description: "sample data"},
 			},
 		},
 	}

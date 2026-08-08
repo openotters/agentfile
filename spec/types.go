@@ -1,5 +1,7 @@
 package spec
 
+import "sort"
+
 type Agentfile struct {
 	Syntax string `json:"syntax"`
 	Agent  *Agent `json:"agent"`
@@ -105,9 +107,13 @@ type Capability struct {
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 }
 
+// Add is one ADD <src> [<name>] [<description>] declaration. Name is
+// the flat filename the file materialises as (etc/data/{name}) and the
+// layer's org.opencontainers.image.title in the artifact; the parser
+// defaults it to basename(src) when the directive omits it.
 type Add struct {
 	Src         string `json:"src"`
-	Dst         string `json:"dst"`
+	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	Content     []byte `json:"-"`
 }
@@ -177,6 +183,55 @@ func WithExtraEnvs(envs []*Env) Override {
 		}
 		merged = append(merged, envs...)
 		agentfile.Agent.Envs = merged
+	}
+}
+
+// WithConfig sets or overrides CONFIG values on the parsed Agentfile.
+// It is the deploy-time value-provision channel — how a value supplied
+// at run time (e.g. a repeatable `--config key=value` flag) reaches the
+// agent.
+//
+// For each entry: a matching declared key has its Value replaced; a key
+// the Agentfile never declared is appended as a new Config (runtimes
+// consume whatever keys they recognise). This is what makes a required
+// CONFIG usable — a key declared `key!` with no value gets its value
+// here, so spec.RequiredConfigsProvided passes. Overrides run in Apply,
+// which the executor invokes before its required-config gate, so a
+// supplied value satisfies the requirement.
+func WithConfig(values map[string]string) Override {
+	return func(agentfile *Agentfile) {
+		if agentfile.Agent == nil || len(values) == 0 {
+			return
+		}
+
+		remaining := make(map[string]string, len(values))
+		for k, v := range values {
+			remaining[k] = v
+		}
+
+		for _, c := range agentfile.Agent.Configs {
+			if c == nil {
+				continue
+			}
+
+			if v, ok := remaining[c.Key]; ok {
+				c.Value = v
+				delete(remaining, c.Key)
+			}
+		}
+
+		// Append keys the Agentfile didn't declare, sorted for a
+		// deterministic Configs slice.
+		keys := make([]string, 0, len(remaining))
+		for k := range remaining {
+			keys = append(keys, k)
+		}
+
+		sort.Strings(keys)
+
+		for _, k := range keys {
+			agentfile.Agent.Configs = append(agentfile.Agent.Configs, &Config{Key: k, Value: remaining[k]})
+		}
 	}
 }
 

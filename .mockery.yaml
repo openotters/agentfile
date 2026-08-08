@@ -2,8 +2,8 @@
 #
 # Mocks live under mocks/<package>/ with one file per interface. We use
 # testify-mock with typed expecters (e.g.
-# Mock.EXPECT().Prompt(ctx, req, w).Return(nil)), which catches
-# wrong-type expectations at compile time instead of at assertion time.
+# Mock.EXPECT().Run(ctx).Return(nil)), which catches wrong-type
+# expectations at compile time instead of at assertion time.
 #
 # When a new interface is introduced, list it here and run `task
 # mocks:generate`. CI runs `task mocks:verify` which regenerates and
@@ -15,9 +15,6 @@
 #   - oci.Puller — function type, not an interface; mockery can't
 #     target function types. Tests use oci.NoopPuller or a bare
 #     closure.
-#   - agent/api/v1 protoc-generated AgentRuntime{Client,Server} — we
-#     use bufconn + the real generated server for Dialer tests
-#     (Seam 4 in the testability plan).
 
 template: testify
 
@@ -31,16 +28,12 @@ packages:
     interfaces:
       Agent:
       Provider:
-      Prompter:
-      StreamPrompter:
-      ObjectPrompter:
       StatusObserver:
   github.com/openotters/agentfile/executor/system:
     interfaces:
       LoopbackAllocator:
       Spawner:
       Cmd:
-      Dialer:
   github.com/openotters/agentfile/executor/docker:
     interfaces:
       Client:

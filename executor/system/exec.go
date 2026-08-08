@@ -5,57 +5,43 @@ import (
 	"io"
 	"os"
 	osExec "os/exec"
+	"syscall"
 )
 
-// Spawner produces a Cmd for a given binary + args. Abstracted so
-// tests can substitute a scripted stub instead of spawning real
-// subprocesses. Default implementation is defaultSpawner, which
-// wraps os/exec.Command.
-//
-// This is the *system* executor's process-spawn seam — narrow on
-// purpose. The pluggable executor boundary (system / docker / …)
-// lives one level up at agent.Provider; nothing outside the system
-// package should implement Spawner.
+// Spawner produces a Cmd for a binary and args. Abstracted so tests can
+// substitute a scripted stub instead of spawning real subprocesses.
 type Spawner interface {
 	Command(name string, args ...string) Cmd
 }
 
-// Cmd is the narrow slice of *os/exec.Cmd that process.serve actually
-// needs: start, wait, deliver a signal, and wire stdout/stderr. The
-// default implementation adapts *os/exec.Cmd.
-//
-// Signal implementations must be safe to call before Start and after
-// Wait; in both cases they should return an error rather than panic,
-// so process.signal's best-effort behaviour (signal then Kill on
-// error) remains deterministic.
+// Cmd is the slice of *os/exec.Cmd that process.serve needs: start, wait,
+// signal, force-kill the process group, and wire stdio/env/dir. Signal and
+// Kill must be safe to call before Start and after Wait, returning an error
+// rather than panicking.
 type Cmd interface {
 	Start() error
 	Wait() error
 	Signal(sig os.Signal) error
+	Kill() error
 	SetStdout(w io.Writer)
 	SetStderr(w io.Writer)
 	SetEnv(env []string)
-	// SetDir sets the working directory for the spawned process.
-	// Empty string keeps the parent's CWD. Used by process.serve to
-	// chdir into <agent-root>/workspace before spawn so tools that
-	// take relative paths (`cat ./foo`, `find . -type f`) resolve
-	// inside the agent root regardless of where ottersd was started.
 	SetDir(dir string)
 }
 
-// defaultSpawner is the production Spawner: builds real
-// *os/exec.Cmd values and wraps them in osCmd.
+// defaultSpawner is the production Spawner. It puts each runtime in its own
+// process group so a force-kill reaps the tools it spawned, not just the
+// runtime itself.
 type defaultSpawner struct{}
 
 func (defaultSpawner) Command(name string, args ...string) Cmd {
-	// process.serve manages the lifecycle (signal-then-wait with
-	// deadline) instead of relying on CommandContext's auto-kill.
-	return &osCmd{cmd: osExec.Command(name, args...)} //nolint:noctx // see comment
+	cmd := osExec.Command(name, args...) //nolint:noctx // process.serve owns the lifecycle
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+	return &osCmd{cmd: cmd}
 }
 
-// osCmd adapts *os/exec.Cmd to the Cmd interface. A zero-value
-// osCmd.cmd is treated as "not started" by Signal so callers can't
-// accidentally deref a nil Process.
+// osCmd adapts *os/exec.Cmd to Cmd. A nil Process is treated as "not started".
 type osCmd struct {
 	cmd *osExec.Cmd
 }
@@ -69,6 +55,20 @@ func (c *osCmd) Signal(sig os.Signal) error {
 	}
 
 	return c.cmd.Process.Signal(sig)
+}
+
+// Kill force-kills the runtime's whole process group, so tools it spawned die
+// with it. Falls back to killing just the process if the group send fails.
+func (c *osCmd) Kill() error {
+	if c.cmd == nil || c.cmd.Process == nil {
+		return fmt.Errorf("process not started")
+	}
+
+	if err := syscall.Kill(-c.cmd.Process.Pid, syscall.SIGKILL); err == nil {
+		return nil
+	}
+
+	return c.cmd.Process.Kill()
 }
 
 func (c *osCmd) SetStdout(w io.Writer) { c.cmd.Stdout = w }

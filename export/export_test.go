@@ -49,7 +49,7 @@ func TestExportImport_Roundtrip(t *testing.T) {
 				{Name: "wget", Image: "ghcr.io/openotters/tools/wget:latest", Description: "Fetch URL"},
 			},
 			Adds: []*spec.Add{
-				{Src: "data.json", Dst: "/data/data.json", Description: "Test data"},
+				{Src: "data.json", Name: "data.json", Description: "Test data"},
 			},
 			Labels: map[string]string{"description": "Roundtrip test agent"},
 			Args:   map[string]string{},

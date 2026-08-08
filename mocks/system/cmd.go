@@ -38,6 +38,50 @@ func (_m *MockCmd) EXPECT() *MockCmd_Expecter {
 	return &MockCmd_Expecter{mock: &_m.Mock}
 }
 
+// Kill provides a mock function for the type MockCmd
+func (_mock *MockCmd) Kill() error {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for Kill")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func() error); ok {
+		r0 = returnFunc()
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// MockCmd_Kill_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Kill'
+type MockCmd_Kill_Call struct {
+	*mock.Call
+}
+
+// Kill is a helper method to define mock.On call
+func (_e *MockCmd_Expecter) Kill() *MockCmd_Kill_Call {
+	return &MockCmd_Kill_Call{Call: _e.mock.On("Kill")}
+}
+
+func (_c *MockCmd_Kill_Call) Run(run func()) *MockCmd_Kill_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockCmd_Kill_Call) Return(err error) *MockCmd_Kill_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *MockCmd_Kill_Call) RunAndReturn(run func() error) *MockCmd_Kill_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // SetDir provides a mock function for the type MockCmd
 func (_mock *MockCmd) SetDir(dir string) {
 	_mock.Called(dir)
@@ -51,7 +95,7 @@ type MockCmd_SetDir_Call struct {
 
 // SetDir is a helper method to define mock.On call
 //   - dir string
-func (_e *MockCmd_Expecter) SetDir(dir interface{}) *MockCmd_SetDir_Call {
+func (_e *MockCmd_Expecter) SetDir(dir any) *MockCmd_SetDir_Call {
 	return &MockCmd_SetDir_Call{Call: _e.mock.On("SetDir", dir)}
 }
 
@@ -91,7 +135,7 @@ type MockCmd_SetEnv_Call struct {
 
 // SetEnv is a helper method to define mock.On call
 //   - env []string
-func (_e *MockCmd_Expecter) SetEnv(env interface{}) *MockCmd_SetEnv_Call {
+func (_e *MockCmd_Expecter) SetEnv(env any) *MockCmd_SetEnv_Call {
 	return &MockCmd_SetEnv_Call{Call: _e.mock.On("SetEnv", env)}
 }
 
@@ -131,7 +175,7 @@ type MockCmd_SetStderr_Call struct {
 
 // SetStderr is a helper method to define mock.On call
 //   - w io.Writer
-func (_e *MockCmd_Expecter) SetStderr(w interface{}) *MockCmd_SetStderr_Call {
+func (_e *MockCmd_Expecter) SetStderr(w any) *MockCmd_SetStderr_Call {
 	return &MockCmd_SetStderr_Call{Call: _e.mock.On("SetStderr", w)}
 }
 
@@ -171,7 +215,7 @@ type MockCmd_SetStdout_Call struct {
 
 // SetStdout is a helper method to define mock.On call
 //   - w io.Writer
-func (_e *MockCmd_Expecter) SetStdout(w interface{}) *MockCmd_SetStdout_Call {
+func (_e *MockCmd_Expecter) SetStdout(w any) *MockCmd_SetStdout_Call {
 	return &MockCmd_SetStdout_Call{Call: _e.mock.On("SetStdout", w)}
 }
 
@@ -222,7 +266,7 @@ type MockCmd_Signal_Call struct {
 
 // Signal is a helper method to define mock.On call
 //   - sig os.Signal
-func (_e *MockCmd_Expecter) Signal(sig interface{}) *MockCmd_Signal_Call {
+func (_e *MockCmd_Expecter) Signal(sig any) *MockCmd_Signal_Call {
 	return &MockCmd_Signal_Call{Call: _e.mock.On("Signal", sig)}
 }
 

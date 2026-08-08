@@ -23,39 +23,31 @@ type Runtime struct {
 	ResolvedConfig `yaml:",inline" json:",inline"`
 }
 
-// ResolvedConfig is the runtime-side configuration that agent.yaml
-// serialises: identity, OCI provenance (image + runtime as
-// ref+digest pairs), spec-declared envs/mounts (operator values
-// live in daemon.db and hydrate in-memory), declared context
-// filenames, runtime tunables, and resolved tool surface. APIBase /
-// APIKey are intentionally non-serialised — credentials travel via
-// spawn env (<PROVIDER>_API_KEY / <PROVIDER>_API_BASE), not disk.
+// ResolvedConfig is the runtime-side configuration that agent.yaml serialises:
+// identity, OCI provenance, resolved config/tools/context/capabilities, and the
+// exec args needed to restart the agent.
+//
+// Addr, APIBase, and APIKey are not persisted. APIBase/APIKey are credentials
+// that travel via the spawn env; Addr is an ephemeral loopback binding that a
+// restart re-reserves (see the executor's Load).
 type ResolvedConfig struct {
-	ID        uuid.UUID         `yaml:"id" json:"id"`
-	Name      string            `yaml:"name" json:"name"`
-	Model     string            `yaml:"model" json:"model"`
-	Workspace string            `yaml:"workspace,omitempty" json:"workspace,omitempty"`
-	Image     *OCIRef           `yaml:"image,omitempty" json:"image,omitempty"`
-	Runtime   *RuntimeRef       `yaml:"runtime,omitempty" json:"runtime,omitempty"`
-	Configs   map[string]string `yaml:"configs,omitempty" json:"configs,omitempty"`
-	// Capabilities enumerates the LLM-facing tool functions the
-	// runtime image registers (NOT per-BIN tools — those live in
-	// Tools). Each carries its description so the model can read
-	// what every tool does straight out of agent.yaml. Populated
-	// by the daemon at materialise time. A future Agentfile
-	// CAPABILITY directive will gate individual entries.
-	Capabilities []Capability   `yaml:"capabilities,omitempty" json:"capabilities,omitempty"`
-	Envs         []*spec.Env    `yaml:"envs,omitempty" json:"envs,omitempty"`
-	Mounts       []*spec.Mount  `yaml:"mounts,omitempty" json:"mounts,omitempty"`
-	Context      []ContextEntry `yaml:"context,omitempty" json:"context,omitempty"`
-	Tools        []ResolvedTool `yaml:"tools,omitempty" json:"tools,omitempty"`
-	// Exec is the operator-supplied entrypoint override (e.g. a
-	// custom runtime invocation). Lives in daemon.db; never on
-	// disk in agent.yaml.
-	Exec    []string `yaml:"-" json:"-"`
-	Addr    string   `yaml:"-" json:"-"`
-	APIBase string   `yaml:"-" json:"-"`
-	APIKey  string   `yaml:"-" json:"-"`
+	ID           uuid.UUID         `yaml:"id" json:"id"`
+	Name         string            `yaml:"name" json:"name"`
+	Model        string            `yaml:"model" json:"model"`
+	Workspace    string            `yaml:"workspace,omitempty" json:"workspace,omitempty"`
+	Image        *OCIRef           `yaml:"image,omitempty" json:"image,omitempty"`
+	Runtime      *RuntimeRef       `yaml:"runtime,omitempty" json:"runtime,omitempty"`
+	Configs      map[string]string `yaml:"configs,omitempty" json:"configs,omitempty"`
+	Capabilities []Capability      `yaml:"capabilities,omitempty" json:"capabilities,omitempty"`
+	Envs         []*spec.Env       `yaml:"envs,omitempty" json:"envs,omitempty"`
+	Mounts       []*spec.Mount     `yaml:"mounts,omitempty" json:"mounts,omitempty"`
+	Context      []ContextEntry    `yaml:"context,omitempty" json:"context,omitempty"`
+	Tools        []ResolvedTool    `yaml:"tools,omitempty" json:"tools,omitempty"`
+	Exec         []string          `yaml:"exec,omitempty" json:"exec,omitempty"`
+
+	Addr    string `yaml:"-" json:"-"`
+	APIBase string `yaml:"-" json:"-"`
+	APIKey  string `yaml:"-" json:"-"`
 }
 
 // OCIRef pairs an image reference with its content-addressed digest.

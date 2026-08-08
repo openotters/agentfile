@@ -50,7 +50,7 @@ func dockerStdCopy(stdout, stderr io.Writer, src io.Reader) error {
 			}
 			return err
 		}
-		size := int(binary.BigEndian.Uint32(hdr[4:8]))
+		size := int64(binary.BigEndian.Uint32(hdr[4:8]))
 		if size == 0 {
 			continue
 		}
@@ -66,7 +66,7 @@ func dockerStdCopy(stdout, stderr io.Writer, src io.Reader) error {
 			// payload to stay in sync with the framing.
 			dst = io.Discard
 		}
-		if _, err := io.CopyN(dst, src, int64(size)); err != nil {
+		if _, err := io.CopyN(dst, src, size); err != nil {
 			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 				return nil
 			}
@@ -121,17 +121,20 @@ func (a *Agent) Exec(ctx context.Context, bin string, args []string, stdin strin
 		}
 	}
 
-	// Build the per-job container spec — same image-mount + env layout
-	// the long-running runtime container uses, but the Cmd is the BIN
-	// invocation (not the runtime entrypoint) and the labels carry
-	// the job ID for ghost cleanup.
-	jobLabel := "exec-" + strconv.FormatInt(time.Now().UnixNano(), 36)
-	cfg, hostCfg := a.buildExecContainer(rt, bin, args, jobLabel)
+	// Snapshot the daemon pair under mu; SetAgentToken mutates it concurrently.
+	a.mu.Lock()
+	daemonURL := a.deps.daemonURL
+	agentToken := a.deps.agentToken
+	a.mu.Unlock()
 
-	// Stdin path: the container needs OpenStdin + StdinOnce so docker
-	// keeps stdin open across the attach, then closes it once the
-	// payload is fully read. AttachStdin lets us deliver bytes via
-	// the hijacked connection from ContainerAttach.
+	// Build the per-job container spec — same image-mount + env layout as the
+	// runtime container, but the Cmd is the BIN invocation and the labels carry
+	// the job ID for cleanup.
+	jobLabel := "exec-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	cfg, hostCfg := a.buildExecContainer(rt, bin, args, jobLabel, daemonURL, agentToken)
+
+	// OpenStdin + StdinOnce keeps stdin open across the attach and closes it
+	// once the payload is fully read; AttachStdin lets us deliver the bytes.
 	if stdin != "" {
 		cfg.OpenStdin = true
 		cfg.StdinOnce = true
@@ -141,7 +144,6 @@ func (a *Agent) Exec(ctx context.Context, bin string, args []string, stdin strin
 	createResp, err := a.deps.client.ContainerCreate(ctx, mobyclient.ContainerCreateOptions{
 		Config:     cfg,
 		HostConfig: hostCfg,
-		// No name — let docker assign one. We track via container ID.
 	})
 	if err != nil {
 		return executor.ExecResult{Err: fmt.Errorf("docker async-exec: create: %w", err)}
@@ -156,18 +158,23 @@ func (a *Agent) Exec(ctx context.Context, bin string, args []string, stdin strin
 			mobyclient.ContainerRemoveOptions{Force: true})
 	}()
 
-	// Pipe the stdin payload to the container BEFORE start. The
-	// attach call hijacks the HTTP connection; we write the payload,
-	// half-close the write side (so the BIN reads EOF), and let the
-	// log-streaming path below carry stdout/stderr like it does for
-	// the no-stdin case.
+	// Attach stdin BEFORE start, then stream the payload in the background so
+	// the container drains it as it runs — a payload larger than the pipe
+	// buffer cannot deadlock the way a write-then-start ordering would.
 	if stdin != "" {
-		if pipeErr := a.pipeStdin(ctx, id, stdin); pipeErr != nil {
+		attach, attachErr := a.deps.client.ContainerAttach(ctx, id, mobyclient.ContainerAttachOptions{
+			Stream: true,
+			Stdin:  true,
+		})
+		if attachErr != nil {
 			return executor.ExecResult{
-				Err:    pipeErr,
+				Err:    fmt.Errorf("docker async-exec: attach stdin %s: %w", id, attachErr),
 				Handle: handle,
 			}
 		}
+		defer attach.Close()
+
+		go streamStdin(attach.Conn, stdin)
 	}
 
 	if _, startErr := a.deps.client.ContainerStart(ctx, id, mobyclient.ContainerStartOptions{}); startErr != nil {
@@ -275,37 +282,17 @@ func (a *Agent) Exec(ctx context.Context, bin string, args []string, stdin strin
 	return out
 }
 
-// pipeStdin attaches to the container's hijacked stdio, writes the
-// payload, and half-closes the write side so the BIN reads EOF.
-// Pulled out of Exec to keep that function readable and stay under
-// the funlen budget.
-func (a *Agent) pipeStdin(ctx context.Context, id, payload string) error {
-	attachResp, err := a.deps.client.ContainerAttach(ctx, id, mobyclient.ContainerAttachOptions{
-		Stream: true,
-		Stdin:  true,
-	})
-	if err != nil {
-		return fmt.Errorf("docker async-exec: attach stdin %s: %w", id, err)
-	}
-	if _, wErr := io.WriteString(attachResp.Conn, payload); wErr != nil {
-		attachResp.Close()
-		return fmt.Errorf("docker async-exec: write stdin %s: %w", id, wErr)
-	}
-	// Half-close: signal EOF to the container's stdin without
-	// tearing down the read side. Falls back to a full close when
-	// the underlying conn doesn't expose CloseWrite (rare — TCP and
-	// unix domain socket both implement it).
-	type closeWriter interface{ CloseWrite() error }
-	if cw, ok := attachResp.Conn.(closeWriter); ok {
+// streamStdin writes payload to a started container's stdin and half-closes so
+// the BIN reads EOF. It runs in its own goroutine, launched after
+// ContainerStart, so the running container drains the write and a large payload
+// cannot block. The caller's deferred attach.Close() unblocks it if the job
+// ends early.
+func streamStdin(conn net.Conn, payload string) {
+	_, _ = io.WriteString(conn, payload)
+
+	if cw, ok := conn.(interface{ CloseWrite() error }); ok {
 		_ = cw.CloseWrite()
-		return nil
 	}
-	if tcp, isTCP := attachResp.Conn.(*net.TCPConn); isTCP {
-		_ = tcp.CloseWrite()
-		return nil
-	}
-	attachResp.Close()
-	return nil
 }
 
 // buildExecContainer assembles the Container.Config + HostConfig for
@@ -316,27 +303,24 @@ func (a *Agent) pipeStdin(ctx context.Context, id, payload string) error {
 //
 //nolint:funlen // single-purpose builder; the body is one linear assembly of mounts + env + labels
 func (a *Agent) buildExecContainer(
-	rt *executor.Runtime, bin string, args []string, jobLabel string,
+	rt *executor.Runtime, bin string, args []string, jobLabel, daemonURL, agentToken string,
 ) (*containertypes.Config, *containertypes.HostConfig) {
 	bins := make(map[string]string, len(rt.Tools))
 	for _, t := range rt.Tools {
 		bins[t.Name] = t.Ref
 	}
 
-	// Flat PATH — every BIN tool resolves through a symlink in
-	// /opt/bins/<name>, surfaced from the agent root via bind mount.
-	// Same shape the runtime container sees.
 	binDirs := []string{inContainerBinsRoot}
 
-	// Rewrite the daemon URL to the in-container form when bind-
-	// mounting the socket (same shape as containerSpec.buildEnv).
-	daemonURL, _, _ := daemonAccess(a.deps.daemonURL)
+	// Rewrite the daemon URL to the in-container form when bind-mounting the
+	// socket (same shape as containerSpec.buildEnv).
+	inContainerDaemonURL, _, _ := daemonAccess(daemonURL)
 
 	env := executor.BuildLockedEnv(executor.EnvOptions{
 		AgentRoot:  inContainerAgentRoot,
 		BinDirs:    binDirs,
-		DaemonURL:  daemonURL,
-		AgentToken: a.deps.agentToken,
+		DaemonURL:  inContainerDaemonURL,
+		AgentToken: agentToken,
 	})
 
 	// Provider creds live with the agent; jobs MAY need them too
@@ -352,8 +336,10 @@ func (a *Agent) buildExecContainer(
 			env = append(env, fmt.Sprintf("%s_API_BASE=%s", prefix, rt.APIBase))
 		}
 	}
-	env, _ = executor.AppendUserEnv(env, rt.Envs)
+	// CONFIG first, ENV last so an explicit ENV overrides a CONFIG
+	// export of the same resulting name (last-write wins).
 	env = executor.AppendConfigEnv(env, rt.Configs)
+	env, _ = executor.AppendUserEnv(env, rt.Envs)
 
 	cmd := append([]string{bin}, args...)
 
@@ -436,13 +422,15 @@ func (a *Agent) buildExecContainer(
 		AutoRemove: false, // we remove explicitly so Inspect can read exit code
 	}
 
-	// Mirror containerSpec's daemon-access wiring: bind-mount the
-	// socket for the unix scheme, add host.docker.internal mapping
+	// Mirror containerSpec's daemon-access wiring, gated both-or-neither: a
+	// socket bind-mount for the unix scheme, or a host.docker.internal mapping
 	// for TCP on plain Linux Docker.
-	if _, mount, extraHost := daemonAccess(a.deps.daemonURL); mount != nil {
-		hostCfg.Mounts = append(hostCfg.Mounts, *mount)
-	} else if extraHost != "" {
-		hostCfg.ExtraHosts = append(hostCfg.ExtraHosts, extraHost)
+	if daemonURL != "" && agentToken != "" {
+		if _, mount, extraHost := daemonAccess(daemonURL); mount != nil {
+			hostCfg.Mounts = append(hostCfg.Mounts, *mount)
+		} else if extraHost != "" {
+			hostCfg.ExtraHosts = append(hostCfg.ExtraHosts, extraHost)
+		}
 	}
 
 	return cfg, hostCfg

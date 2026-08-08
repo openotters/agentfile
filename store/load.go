@@ -102,7 +102,7 @@ func LoadHydrated(ctx context.Context, s oras.ReadOnlyTarget, ref spec.Reference
 	}
 
 	for _, a := range af.Agent.Adds {
-		if data, ok := addData[a.Dst]; ok {
+		if data, ok := addData[a.Name]; ok {
 			a.Content = data
 		}
 	}

@@ -2,10 +2,12 @@ package system
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/go-git/go-billy/v6"
 	"github.com/go-git/go-billy/v6/osfs"
@@ -37,10 +39,8 @@ type Provider struct {
 	loopback      LoopbackAllocator
 	agentDefaults []AgentOption
 
-	// registry is the executor.Registry façade exposed via the
-	// Registry() method. Constructed lazily on first access; the
-	// daemon plumbs the underlying oras.Target + HTTP addr via
-	// WithRegistryTarget / WithRegistryAddr at NewProvider time.
+	// The Registry façade is built lazily on first Registry() call.
+	registryOnce      sync.Once
 	registry          *registry
 	registryTarget    oras.Target
 	registryAddr      string
@@ -51,11 +51,13 @@ type Provider struct {
 // Create to produce the oras.ReadOnlyTarget backing that agent's image.
 func NewProvider(root billy.Filesystem, storeFor StoreFor, opts ...ProviderOption) *Provider {
 	a := &Provider{
-		fs:           root,
-		hostFS:       osfs.New("/"),
-		storeFor:     storeFor,
-		ociPuller:    agentoci.RemotePuller(),
-		usageFetcher: agentoci.RemoteUsageFetcher(),
+		fs:       root,
+		hostFS:   osfs.New("/"),
+		storeFor: storeFor,
+		// Binaries run directly on the host, so multi-arch refs
+		// resolve against the host platform.
+		ociPuller:    agentoci.RemotePuller(agentoci.HostPlatform()),
+		usageFetcher: agentoci.RemoteUsageFetcher(agentoci.HostPlatform()),
 		loopback:     defaultLoopbackAllocator{},
 	}
 
@@ -98,10 +100,8 @@ func (a *Provider) Create(
 	return a.CreateWithOptions(ctx, id, ref, nil, opts...)
 }
 
-// CreateWithOptions is Create plus a slice of per-instance AgentOption
-// values (mounts, custom stdout, …). Kept as an extra method so the
-// executor.Provider interface stays narrow — only the system provider
-// understands these options; other providers keep working unchanged.
+// CreateWithOptions is Create plus per-instance AgentOptions (mounts, custom
+// stdout, …). Kept separate so executor.Provider stays narrow.
 func (a *Provider) CreateWithOptions(
 	_ context.Context, id uuid.UUID, ref spec.Reference,
 	extra []AgentOption, overrides ...spec.Override,
@@ -111,85 +111,141 @@ func (a *Provider) CreateWithOptions(
 		return nil, fmt.Errorf("chrootfs: %w", err)
 	}
 
+	opts, err := a.instanceOptions(id, a.agentOpts(ref, overrides))
+	if err != nil {
+		return nil, err
+	}
+
+	return NewAgent(id, chrootfs, append(opts, extra...)...), nil
+}
+
+// instanceOptions appends the per-instance options every agent needs: a fresh
+// loopback address and, when a log dir is configured, the log file wired as
+// stdout/stderr and handed over for close-on-Remove.
+func (a *Provider) instanceOptions(id uuid.UUID, base []AgentOption) ([]AgentOption, error) {
 	addr, err := a.loopback.Reserve()
 	if err != nil {
 		return nil, fmt.Errorf("reserving runtime address: %w", err)
 	}
 
-	agentOpts := append(a.agentOpts(ref, overrides), WithAddr(addr))
+	opts := make([]AgentOption, 0, len(base)+4)
+	opts = append(opts, base...)
+	opts = append(opts, WithAddr(addr))
 
-	if logFile, logErr := a.openLogFile(id); logErr == nil && logFile != nil {
-		agentOpts = append(agentOpts, WithStdout(logFile), WithStderr(logFile))
+	logFile, err := a.openLogFile(id)
+	if err != nil {
+		return nil, fmt.Errorf("opening log file: %w", err)
 	}
 
-	agentOpts = append(agentOpts, extra...)
+	if logFile != nil {
+		opts = append(opts, WithStdout(logFile), WithStderr(logFile), withLogCloser(logFile))
+	}
 
-	return NewAgent(id, chrootfs, agentOpts...), nil
+	return opts, nil
 }
 
-// openLogFile returns an append-mode writer at <logDir>/<id>.log or
-// nil if logDir is unset. Callers treat nil as "use the default
-// stdout/stderr from NewAgent". The file descriptor is intentionally
-// leaked for the agent's lifetime — closing it on Stop would force us
-// to reopen on Start, and subprocesses outlive individual gRPC calls.
-//
-// Reads/writes go through hostFS (non-chrooted), so the log directory
-// lives on the real host disk in production and in-memory in tests.
-func (a *Provider) openLogFile(id uuid.UUID) (io.Writer, error) {
+// openLogFile opens <logDir>/<id>.log in append mode, or returns nil when no
+// log dir is configured (the agent then keeps its default stdout/stderr). The
+// caller closes it on Remove.
+func (a *Provider) openLogFile(id uuid.UUID) (io.WriteCloser, error) {
 	if a.logDir == "" {
-		return nil, nil //nolint:nilnil // documented contract: nil writer = use default stdout/stderr
+		return nil, nil //nolint:nilnil // nil closer means "use default stdout/stderr"
 	}
 
 	if err := a.hostFS.MkdirAll(a.logDir, 0o755); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("creating log dir: %w", err)
 	}
 
-	return a.hostFS.OpenFile(
+	f, err := a.hostFS.OpenFile(
 		filepath.Join(a.logDir, id.String()+".log"),
-		os.O_APPEND|os.O_CREATE|os.O_WRONLY,
-		0o644,
+		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644,
 	)
+	if err != nil {
+		return nil, fmt.Errorf("opening log file: %w", err)
+	}
+
+	return f, nil
 }
 
-// Load recovers previously created agents from existing chroot directories.
+// Load recovers previously created agents from their chroot directories. Each
+// recovered agent gets the same instance options a freshly-created one would
+// (a fresh address, log file, hostFS), and is marked already-materialised so it
+// is not rebuilt. Per-agent load errors are collected and returned alongside
+// the agents that did load, so one corrupt tree does not hide the rest.
 func (a *Provider) Load(_ context.Context) ([]executor.Agent, error) {
 	entries, err := a.fs.ReadDir(".")
 	if err != nil {
 		return nil, fmt.Errorf("reading root: %w", err)
 	}
 
-	var agents []executor.Agent
+	var (
+		agents  []executor.Agent
+		loadErr error
+	)
 
 	for _, entry := range entries {
-		if !entry.IsDir() {
+		id, idErr := agentDirID(entry)
+		if idErr != nil {
 			continue
 		}
 
-		id, parseErr := uuid.Parse(entry.Name())
-		if parseErr != nil {
+		agent, agentErr := a.loadAgent(id)
+		if agentErr != nil {
+			loadErr = errors.Join(loadErr, fmt.Errorf("loading agent %s: %w", id, agentErr))
+
 			continue
 		}
 
-		chrootfs, chrootErr := a.fs.Chroot(entry.Name())
-		if chrootErr != nil {
-			continue
-		}
-
-		rt, loadErr := executor.LoadRuntime(chrootfs)
-		if loadErr != nil {
-			continue
-		}
-
-		rt.ID = id
-
-		// Loaded agents are already materialized -- apply defaults.
-		ag := NewAgent(id, chrootfs, a.agentDefaults...)
-		ag.markInitialized(rt)
-
-		agents = append(agents, ag)
+		agents = append(agents, agent)
 	}
 
-	return agents, nil
+	return agents, loadErr
+}
+
+// dirEntry is the intersection of os.FileInfo and fs.DirEntry that agentDirID
+// needs, so it works regardless of which billy ReadDir returns.
+type dirEntry interface {
+	IsDir() bool
+	Name() string
+}
+
+// agentDirID returns the agent UUID a directory entry names, or an error if it
+// is not an agent directory.
+func agentDirID(entry dirEntry) (uuid.UUID, error) {
+	if entry == nil || !entry.IsDir() {
+		return uuid.Nil, fmt.Errorf("not a directory")
+	}
+
+	return uuid.Parse(entry.Name())
+}
+
+func (a *Provider) loadAgent(id uuid.UUID) (executor.Agent, error) {
+	chrootfs, err := a.fs.Chroot(id.String())
+	if err != nil {
+		return nil, fmt.Errorf("chroot: %w", err)
+	}
+
+	rt, err := executor.LoadRuntime(chrootfs)
+	if err != nil {
+		return nil, fmt.Errorf("reading agent.yaml: %w", err)
+	}
+
+	rt.ID = id
+
+	ref := spec.Reference{}
+	if rt.Image != nil {
+		ref = spec.ParseReference(rt.Image.Ref)
+	}
+
+	opts, err := a.instanceOptions(id, a.agentOpts(ref, nil))
+	if err != nil {
+		return nil, err
+	}
+
+	ag := NewAgent(id, chrootfs, opts...)
+	ag.markInitialized(rt)
+
+	return ag, nil
 }
 
 // Destroy removes all agent chroot directories.
@@ -216,13 +272,11 @@ func (a *Provider) Destroy(_ context.Context) error {
 	return nil
 }
 
-// Registry returns the executor.Registry façade for this Provider.
-// Lazily constructed on first call so callers that never need it
-// pay no cost.
+// Registry returns the executor.Registry façade, built once on first call.
 func (a *Provider) Registry() executor.Registry {
-	if a.registry == nil {
+	a.registryOnce.Do(func() {
 		a.registry = newRegistry(a.registryTarget, a.registryAddr, a.registryCreatedAt)
-	}
+	})
 
 	return a.registry
 }

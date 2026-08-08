@@ -111,7 +111,7 @@ func Build(
 			}
 		}
 
-		annotations := map[string]string{v1.AnnotationTitle: a.Dst}
+		annotations := map[string]string{v1.AnnotationTitle: a.Name}
 		desc, err := pushBlob(ctx, dst, spec.OctetStream, data, annotations)
 		if err != nil {
 			return nil, fmt.Errorf("pushing file %s: %w", a.Src, err)

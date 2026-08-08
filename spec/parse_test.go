@@ -8,11 +8,125 @@ import (
 	"github.com/openotters/agentfile/spec"
 )
 
+func TestRequiredConfigsProvided(t *testing.T) {
+	t.Parallel()
+
+	val := "https://example.com"
+
+	tests := []struct {
+		name    string
+		configs []*spec.Config
+		wantErr bool
+		wantKey string
+	}{
+		{
+			name:    "required with value passes",
+			configs: []*spec.Config{{Key: "api-base", Required: true, Value: val}},
+			wantErr: false,
+		},
+		{
+			name:    "required without value fails",
+			configs: []*spec.Config{{Key: "api-base", Required: true}},
+			wantErr: true,
+			wantKey: "api-base",
+		},
+		{
+			name:    "optional without value passes",
+			configs: []*spec.Config{{Key: "custom-header"}},
+			wantErr: false,
+		},
+		{
+			name: "lists every missing required key",
+			configs: []*spec.Config{
+				{Key: "zeta", Required: true},
+				{Key: "alpha", Required: true},
+				{Key: "set", Required: true, Value: val},
+			},
+			wantErr: true,
+			wantKey: "alpha, zeta", // sorted
+		},
+		{
+			name:    "nil entries ignored",
+			configs: []*spec.Config{nil, {Key: "ok", Value: val}},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := spec.RequiredConfigsProvided(tt.configs)
+			if tt.wantErr && err == nil {
+				t.Fatalf("expected error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tt.wantKey != "" && !strings.Contains(err.Error(), tt.wantKey) {
+				t.Errorf("error %q does not name %q", err, tt.wantKey)
+			}
+		})
+	}
+}
+
+func TestWithConfig(t *testing.T) {
+	t.Parallel()
+
+	t.Run("overrides declared key and satisfies required", func(t *testing.T) {
+		t.Parallel()
+
+		af := &spec.Agentfile{Agent: &spec.Agent{
+			From:    "scratch",
+			Configs: []*spec.Config{{Key: "api-base", Required: true}},
+		}}
+
+		// Required-but-unset fails before the override.
+		if err := spec.RequiredConfigsProvided(af.Agent.Configs); err == nil {
+			t.Fatal("expected required config to be unsatisfied before override")
+		}
+
+		af.Apply(spec.WithConfig(map[string]string{"api-base": "https://example.com"}))
+
+		if got := af.Agent.Configs[0].Value; got != "https://example.com" {
+			t.Errorf("value = %v, want override", got)
+		}
+		// Override makes the required config deployable.
+		if err := spec.RequiredConfigsProvided(af.Agent.Configs); err != nil {
+			t.Errorf("override should satisfy required config: %v", err)
+		}
+	})
+
+	t.Run("appends undeclared key", func(t *testing.T) {
+		t.Parallel()
+
+		af := &spec.Agentfile{Agent: &spec.Agent{From: "scratch"}}
+		af.Apply(spec.WithConfig(map[string]string{"new-key": "v"}))
+
+		if len(af.Agent.Configs) != 1 || af.Agent.Configs[0].Key != "new-key" {
+			t.Fatalf("expected appended config, got %+v", af.Agent.Configs)
+		}
+	})
+
+	t.Run("empty values is a no-op", func(t *testing.T) {
+		t.Parallel()
+
+		af := &spec.Agentfile{Agent: &spec.Agent{
+			From:    "scratch",
+			Configs: []*spec.Config{{Key: "x", Value: "keep"}},
+		}}
+		af.Apply(spec.WithConfig(nil))
+
+		if af.Agent.Configs[0].Value != "keep" {
+			t.Errorf("nil override mutated existing value: %v", af.Agent.Configs[0].Value)
+		}
+	})
+}
+
 func TestParse_CompleteExample(t *testing.T) {
 	t.Parallel()
 
-	input := `
-# syntax=openotters/agentfile:1
+	input := `# syntax=openotters/agentfile:1
 
 FROM scratch
 
@@ -38,7 +152,7 @@ CONFIG api-base! "API base URL for the LLM provider"
 BIN wget ghcr.io/openotters/tools/wget:latest
 BIN jq ghcr.io/openotters/tools/jq:latest "Extract fields from JSON"
 
-ADD data/cities.json /data/workspace/cities.json
+ADD data/cities.json cities-known.json
 `
 
 	af, err := spec.Parse(strings.NewReader(input))
@@ -120,8 +234,8 @@ ADD data/cities.json /data/workspace/cities.json
 		t.Fatalf("adds = %d, want 1", len(a.Adds))
 	}
 
-	if a.Adds[0].Src != "data/cities.json" || a.Adds[0].Dst != "/data/workspace/cities.json" {
-		t.Errorf("add = %s → %s", a.Adds[0].Src, a.Adds[0].Dst)
+	if a.Adds[0].Src != "data/cities.json" || a.Adds[0].Name != "cities-known.json" {
+		t.Errorf("add = %s → %s", a.Adds[0].Src, a.Adds[0].Name)
 	}
 }
 
@@ -188,9 +302,10 @@ func TestParse_ArgSubstitution(t *testing.T) {
 	input := `FROM scratch
 ARG MODEL=anthropic/claude-haiku-4-5-20251001
 ARG MAX_TOKENS=2048
+ARG SUFFIX=v2
 MODEL ${MODEL}
 CONFIG max-tokens=${MAX_TOKENS} "Max tokens"
-NAME test-${MODEL}
+NAME test-${SUFFIX}
 `
 	af, err := spec.Parse(strings.NewReader(input))
 	if err != nil {
@@ -215,25 +330,29 @@ NAME test-${MODEL}
 		t.Errorf("config max-tokens = %v (%T), want int64(2048)", a.Configs[0].Value, a.Configs[0].Value)
 	}
 
-	if a.Name != "test-anthropic/claude-haiku-4-5-20251001" {
-		t.Errorf("name = %q", a.Name)
+	if a.Name != "test-v2" {
+		t.Errorf("name = %q, want test-v2", a.Name)
 	}
 }
 
 func TestParse_ArgWithoutDefault_LeavesUnexpanded(t *testing.T) {
 	t.Parallel()
 
+	// The unexpanded ${VAR} lands in a LABEL value — a position with
+	// no name-shape rule — because path-safe positions (NAME etc.)
+	// reject the literal `${…}` at validate, by design.
 	input := `FROM scratch
 ARG PROVIDER
-NAME agent-${PROVIDER}
+LABEL provider=agent-${PROVIDER}
 `
 	af, err := spec.Parse(strings.NewReader(input))
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
 
-	if af.Agent.Name != "agent-${PROVIDER}" {
-		t.Errorf("name = %q, want agent-${PROVIDER} (should not expand undefined arg)", af.Agent.Name)
+	if af.Agent.Labels["provider"] != "agent-${PROVIDER}" {
+		t.Errorf("label = %q, want agent-${PROVIDER} (should not expand undefined arg)",
+			af.Agent.Labels["provider"])
 	}
 }
 
@@ -609,7 +728,7 @@ func TestParse_FROMFirstWithComments(t *testing.T) {
 	t.Parallel()
 
 	input := `# this is a comment
-# syntax=openotters/agentfile:1
+# another comment
 
 FROM scratch
 NAME test
@@ -622,6 +741,61 @@ NAME test
 	if af.Agent.From != "scratch" {
 		t.Errorf("from = %q, want scratch", af.Agent.From)
 	}
+}
+
+func TestParse_SyntaxDirective(t *testing.T) {
+	t.Parallel()
+
+	t.Run("misplaced directive is an error", func(t *testing.T) {
+		t.Parallel()
+
+		input := `# a comment
+# syntax=openotters/agentfile:1
+FROM scratch
+`
+		if _, err := spec.Parse(strings.NewReader(input)); err == nil ||
+			!strings.Contains(err.Error(), "very first line") {
+			t.Fatalf("expected misplaced-directive error, got %v", err)
+		}
+	})
+
+	t.Run("unsupported value is an error", func(t *testing.T) {
+		t.Parallel()
+
+		input := `# syntax=docker/dockerfile:1
+FROM scratch
+`
+		if _, err := spec.Parse(strings.NewReader(input)); err == nil ||
+			!strings.Contains(err.Error(), "unsupported syntax") {
+			t.Fatalf("expected unsupported-syntax error, got %v", err)
+		}
+	})
+
+	t.Run("first-line directive accepted", func(t *testing.T) {
+		t.Parallel()
+
+		input := `# syntax=openotters/agentfile:1
+FROM scratch
+`
+		af, err := spec.Parse(strings.NewReader(input))
+		if err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+
+		if af.Syntax != "openotters/agentfile:1" {
+			t.Errorf("syntax = %q", af.Syntax)
+		}
+	})
+
+	t.Run("BOM rejected", func(t *testing.T) {
+		t.Parallel()
+
+		input := "\ufeffFROM scratch\n"
+		if _, err := spec.Parse(strings.NewReader(input)); err == nil ||
+			!strings.Contains(err.Error(), "byte-order mark") {
+			t.Fatalf("expected BOM error, got %v", err)
+		}
+	})
 }
 
 func TestParse_CapabilitySingleAndMultiName(t *testing.T) {
@@ -679,5 +853,190 @@ CAPABILITY note-save note-save note-save
 	got := af.Agent.Capabilities
 	if len(got) != 1 || got[0] != "note-save" {
 		t.Errorf("capabilities = %v, want [note-save]", got)
+	}
+}
+
+func TestParse_PathSafeNames(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"NAME with slash", "FROM scratch\nNAME agents/meteo\n"},
+		{"NAME dot-prefixed", "FROM scratch\nNAME .hidden\n"},
+		{"CONTEXT traversal", "FROM scratch\nCONTEXT ../../etc/passwd <<EOF\nx\nEOF\n"},
+		{"BIN with slash", "FROM scratch\nBIN tools/jq ghcr.io/x/jq:latest\n"},
+		{"ADD name with slash", "FROM scratch\nADD cities.json /data/cities.json\n"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if _, err := spec.Parse(strings.NewReader(tt.input)); err == nil ||
+				!strings.Contains(err.Error(), "path") {
+				t.Fatalf("expected path-safe rejection, got %v", err)
+			}
+		})
+	}
+}
+
+func TestParse_DNS1123Names(t *testing.T) {
+	t.Parallel()
+
+	t.Run("CONFIG key rejected", func(t *testing.T) {
+		t.Parallel()
+
+		input := "FROM scratch\nCONFIG Max.Tokens=1\n"
+		if _, err := spec.Parse(strings.NewReader(input)); err == nil ||
+			!strings.Contains(err.Error(), "DNS-1123") {
+			t.Fatalf("expected DNS-1123 rejection, got %v", err)
+		}
+	})
+
+	t.Run("CAPABILITY name rejected", func(t *testing.T) {
+		t.Parallel()
+
+		input := "FROM scratch\nCAPABILITY Note_Save\n"
+		if _, err := spec.Parse(strings.NewReader(input)); err == nil ||
+			!strings.Contains(err.Error(), "DNS-1123") {
+			t.Fatalf("expected DNS-1123 rejection, got %v", err)
+		}
+	})
+
+	t.Run("CAPABILITY trailing garbage rejected", func(t *testing.T) {
+		t.Parallel()
+
+		input := "FROM scratch\nCAPABILITY note-save # comment\n"
+		if _, err := spec.Parse(strings.NewReader(input)); err == nil {
+			t.Fatal("expected trailing tokens after CAPABILITY to be rejected")
+		}
+	})
+}
+
+func TestParse_FROMExactlyOnce(t *testing.T) {
+	t.Parallel()
+
+	input := "FROM scratch\nNAME a\nFROM scratch\n"
+	if _, err := spec.Parse(strings.NewReader(input)); err == nil ||
+		!strings.Contains(err.Error(), "exactly once") {
+		t.Fatalf("expected duplicate-FROM error, got %v", err)
+	}
+}
+
+func TestParse_ContextFileAndHeredocConflict(t *testing.T) {
+	t.Parallel()
+
+	input := "FROM scratch\nCONTEXT SOUL file://soul.md <<EOF\nx\nEOF\n"
+	if _, err := spec.Parse(strings.NewReader(input)); err == nil ||
+		!strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("expected file/heredoc conflict error, got %v", err)
+	}
+}
+
+func TestParse_ReservedContextNames(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"AGENT", "WORKSPACE", "MOUNTS"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			input := "FROM scratch\nCONTEXT " + name + " <<EOF\nx\nEOF\n"
+			if _, err := spec.Parse(strings.NewReader(input)); err == nil ||
+				!strings.Contains(err.Error(), "reserved") {
+				t.Fatalf("expected reserved-name error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestParse_IdentStartingWithEXEC(t *testing.T) {
+	t.Parallel()
+
+	input := "FROM scratch\nNAME EXECUTOR\nLABEL mode=EXECFAST\n"
+	af, err := spec.Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	if af.Agent.Name != "EXECUTOR" || af.Agent.Labels["mode"] != "EXECFAST" {
+		t.Errorf("name = %q, label = %q", af.Agent.Name, af.Agent.Labels["mode"])
+	}
+}
+
+func TestParse_AddNameDefaultsToBasename(t *testing.T) {
+	t.Parallel()
+
+	input := "FROM scratch\nADD prompts/system.txt \"System prompt\"\n"
+	af, err := spec.Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	add := af.Agent.Adds[0]
+	if add.Src != "prompts/system.txt" || add.Name != "system.txt" {
+		t.Errorf("add = %s → %s, want name system.txt", add.Src, add.Name)
+	}
+
+	if add.Description != "System prompt" {
+		t.Errorf("description = %q", add.Description)
+	}
+}
+
+func TestRequiredConfigsProvided_FlattenedView(t *testing.T) {
+	t.Parallel()
+
+	t.Run("later value satisfies earlier required", func(t *testing.T) {
+		t.Parallel()
+
+		configs := []*spec.Config{
+			{Key: "webhook-url", Required: true},
+			{Key: "webhook-url", Value: "https://example.com"},
+		}
+		if err := spec.RequiredConfigsProvided(configs); err != nil {
+			t.Errorf("child value should satisfy parent requirement: %v", err)
+		}
+	})
+
+	t.Run("last writer unsetting fails", func(t *testing.T) {
+		t.Parallel()
+
+		configs := []*spec.Config{
+			{Key: "webhook-url", Required: true, Value: nil},
+			{Key: "webhook-url", Value: "v"},
+			{Key: "webhook-url"},
+		}
+		if err := spec.RequiredConfigsProvided(configs); err == nil {
+			t.Error("last-writer nil value should leave requirement unsatisfied")
+		}
+	})
+
+	t.Run("set-but-empty counts as set", func(t *testing.T) {
+		t.Parallel()
+
+		configs := []*spec.Config{{Key: "webhook-url", Required: true, Value: ""}}
+		if err := spec.RequiredConfigsProvided(configs); err != nil {
+			t.Errorf("empty-string value should count as set: %v", err)
+		}
+	})
+}
+
+func TestReservedEnvKeys(t *testing.T) {
+	t.Parallel()
+
+	keys := spec.ReservedEnvKeys()
+	if len(keys) == 0 {
+		t.Fatal("expected non-empty reserved env key list")
+	}
+
+	for _, k := range keys {
+		af := &spec.Agentfile{Agent: &spec.Agent{
+			From: "scratch",
+			Envs: []*spec.Env{{Key: k, Value: "x"}},
+		}}
+		if err := spec.Validate(af); err == nil {
+			t.Errorf("ReservedEnvKeys lists %s but Validate accepts it", k)
+		}
 	}
 }

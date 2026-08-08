@@ -2,7 +2,6 @@
 package docker
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -18,7 +17,6 @@ import (
 	"github.com/stretchr/testify/mock"
 	"oras.land/oras-go/v2"
 
-	"github.com/openotters/agentfile/executor"
 	mockdocker "github.com/openotters/agentfile/mocks/docker"
 	"github.com/openotters/agentfile/model"
 	"github.com/openotters/agentfile/spec"
@@ -43,41 +41,6 @@ func TestAgent_Addr(t *testing.T) {
 	a = newAgent(agentDeps{client: cli, hostGRPCPort: "12345"})
 	if got := a.Addr(); got != "127.0.0.1:12345" {
 		t.Errorf("Addr = %q, want 127.0.0.1:12345", got)
-	}
-}
-
-func TestAgent_PromptStream_NoAddr(t *testing.T) {
-	t.Parallel()
-
-	cli := mockdocker.NewMockClient(t)
-	a := newAgent(agentDeps{client: cli}) // no port
-
-	err := a.PromptStream(context.Background(), executor.PromptRequest{Prompt: "hi"}, func(executor.PromptEvent) {})
-	if err == nil {
-		t.Error("expected error from PromptStream without addr")
-	}
-}
-
-func TestAgent_Prompt_NoAddr(t *testing.T) {
-	t.Parallel()
-
-	cli := mockdocker.NewMockClient(t)
-	a := newAgent(agentDeps{client: cli})
-
-	var buf bytes.Buffer
-	if err := a.Prompt(context.Background(), executor.PromptRequest{Prompt: "hi"}, &buf); err == nil {
-		t.Error("expected error from Prompt without addr")
-	}
-}
-
-func TestAgent_PromptObject_NoAddr(t *testing.T) {
-	t.Parallel()
-
-	cli := mockdocker.NewMockClient(t)
-	a := newAgent(agentDeps{client: cli})
-
-	if _, err := a.PromptObject(context.Background(), executor.ObjectPromptRequest{Prompt: "x"}); err == nil {
-		t.Error("expected error from PromptObject without addr")
 	}
 }
 

@@ -2,6 +2,9 @@ package build_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/go-git/go-billy/v6"
@@ -56,7 +59,7 @@ func newTestAgentfile(t *testing.T) (*spec.Agentfile, billy.Filesystem) {
 				{Name: "wget", Image: "ghcr.io/openotters/tools/wget:latest", Description: "Fetch URL"},
 			},
 			Adds: []*spec.Add{
-				{Src: "data.json", Dst: "/data/data.json", Description: "Test data"},
+				{Src: "data.json", Name: "data.json", Description: "Test data"},
 			},
 			Envs: []*spec.Env{
 				{Key: "NODE_ENV", Value: "production", Description: "Application environment"},
@@ -166,7 +169,7 @@ func TestBuildPushPull_Roundtrip(t *testing.T) {
 		t.Errorf("tools = %v", pulled.Agent.Bins)
 	}
 
-	if len(pulled.Agent.Adds) != 1 || pulled.Agent.Adds[0].Dst != "/data/data.json" {
+	if len(pulled.Agent.Adds) != 1 || pulled.Agent.Adds[0].Name != "data.json" {
 		t.Errorf("adds = %v", pulled.Agent.Adds)
 	}
 
@@ -182,4 +185,103 @@ func TestBuildPushPull_Roundtrip(t *testing.T) {
 	if got.Key != "NODE_ENV" || got.Value != "production" || got.Description != "Application environment" {
 		t.Errorf("env[0] = {%q, %q, %q}", got.Key, got.Value, got.Description)
 	}
+}
+
+func TestFromFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	agentfile := `FROM scratch
+NAME fromfile-test
+RUNTIME ghcr.io/openotters/runtime:latest
+MODEL anthropic/claude-haiku-4-5-20251001
+CONTEXT KNOWLEDGE "Facts" file://knowledge.md
+ADD data.json "Test data"
+`
+	if err := os.WriteFile(filepath.Join(dir, "Agentfile"), []byte(agentfile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "knowledge.md"), []byte("water is wet"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "data.json"), []byte(`{"k":1}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := memory.New()
+
+	ref, err := build.FromFile(context.Background(), filepath.Join(dir, "Agentfile"), store)
+	if err != nil {
+		t.Fatalf("FromFile: %v", err)
+	}
+
+	if ref.Reference.Name != "fromfile-test" {
+		t.Errorf("ref name = %q", ref.Reference.Name)
+	}
+
+	// Round-trip through the store with layer hydration: the file://
+	// context bytes and the ADD bytes live in layers, not the blob.
+	loaded, err := afstore.LoadHydrated(context.Background(), store, ref.Reference)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if len(loaded.Agent.Contexts) != 1 || loaded.Agent.Contexts[0].Content != "water is wet" {
+		t.Errorf("context content = %+v, want file content inlined", loaded.Agent.Contexts)
+	}
+
+	if len(loaded.Agent.Adds) != 1 || loaded.Agent.Adds[0].Name != "data.json" {
+		t.Fatalf("adds = %+v", loaded.Agent.Adds)
+	}
+
+	if string(loaded.Agent.Adds[0].Content) != `{"k":1}` {
+		t.Errorf("add content = %q", loaded.Agent.Adds[0].Content)
+	}
+}
+
+func TestFromFile_Errors(t *testing.T) {
+	t.Parallel()
+
+	t.Run("missing file", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := build.FromFile(context.Background(), filepath.Join(t.TempDir(), "nope"), memory.New())
+		if err == nil {
+			t.Fatal("expected error for missing Agentfile")
+		}
+	})
+
+	t.Run("invalid source", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		path := filepath.Join(dir, "Agentfile")
+		if err := os.WriteFile(path, []byte("BOGUS directive\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := build.FromFile(context.Background(), path, memory.New())
+		if err == nil || !strings.Contains(err.Error(), "parsing") {
+			t.Fatalf("expected parse error, got %v", err)
+		}
+	})
+
+	t.Run("missing ADD source fails at build", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		path := filepath.Join(dir, "Agentfile")
+		agentfile := "FROM scratch\nNAME x\nADD ghost.json\n"
+		if err := os.WriteFile(path, []byte(agentfile), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := build.FromFile(context.Background(), path, memory.New())
+		if err == nil || !strings.Contains(err.Error(), "building") {
+			t.Fatalf("expected build error for missing ADD source, got %v", err)
+		}
+	})
 }

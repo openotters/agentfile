@@ -8,46 +8,9 @@ import (
 	"github.com/go-git/go-billy/v6/memfs"
 	"github.com/go-git/go-billy/v6/osfs"
 	"github.com/google/uuid"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/openotters/agentfile/executor"
 )
-
-// TestCloseClient_NilConnIsNoop exercises the nil-branch of closeClient
-// — called when Stop/Remove fires before dial has been invoked.
-func TestCloseClient_NilConnIsNoop(t *testing.T) {
-	t.Parallel()
-
-	a := &Agent{}
-	a.closeClient() // must not panic, clientConn stays nil
-
-	if a.clientConn != nil {
-		t.Fatal("closeClient left non-nil clientConn")
-	}
-}
-
-// TestCloseClient_ClosesAndClears installs a real (but unreachable)
-// *grpc.ClientConn so the Close branch is exercised. We don't need the
-// conn to be wired to anything — grpc.NewClient with an invalid
-// address still returns a *grpc.ClientConn that Close() handles
-// gracefully.
-func TestCloseClient_ClosesAndClears(t *testing.T) {
-	t.Parallel()
-
-	conn, err := grpc.NewClient("passthrough://nowhere",
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		t.Fatalf("grpc.NewClient: %v", err)
-	}
-
-	a := &Agent{clientConn: conn}
-	a.closeClient()
-
-	if a.clientConn != nil {
-		t.Fatal("closeClient did not clear clientConn")
-	}
-}
 
 // TestReapplyMounts_EmptyIsNoop covers the fast-path branch — an agent
 // with no mounts short-circuits without touching hostFS.

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"runtime"
+	"strings"
 	"testing"
 
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
@@ -28,9 +29,9 @@ func TestResolveIndex_ExactPlatformMatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, ok := resolveIndex(data)
-	if !ok {
-		t.Fatal("expected a match")
+	got, isIndex, err := resolveIndex(data, HostPlatform())
+	if err != nil || !isIndex {
+		t.Fatalf("expected a match, got isIndex=%v err=%v", isIndex, err)
 	}
 
 	if got.Digest != want.Digest {
@@ -38,15 +39,15 @@ func TestResolveIndex_ExactPlatformMatch(t *testing.T) {
 	}
 }
 
-func TestResolveIndex_ArchOnlyFallback(t *testing.T) {
+func TestResolveIndex_NoMatchFailsClosed(t *testing.T) {
 	t.Parallel()
 
-	want := v1.Descriptor{Digest: "sha256:arch-only"}
-
+	// An index whose entries never match the requested platform must
+	// error — never silently fall back to arch-only or first-entry.
 	index := v1.Index{
 		Manifests: []v1.Descriptor{
 			{Digest: "sha256:other", Platform: &v1.Platform{OS: "plan9", Architecture: "ppc"}},
-			{Digest: want.Digest, Platform: &v1.Platform{OS: "otheros", Architecture: runtime.GOARCH}},
+			{Digest: "sha256:arch-only", Platform: &v1.Platform{OS: "otheros", Architecture: runtime.GOARCH}},
 		},
 	}
 
@@ -55,9 +56,42 @@ func TestResolveIndex_ArchOnlyFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, ok := resolveIndex(data)
-	if !ok {
-		t.Fatal("expected a match")
+	_, isIndex, err := resolveIndex(data, HostPlatform())
+	if !isIndex {
+		t.Fatal("expected index detection")
+	}
+
+	if err == nil || !strings.Contains(err.Error(), "no manifest for") {
+		t.Fatalf("expected fail-closed error naming the platform, got %v", err)
+	}
+
+	if !strings.Contains(err.Error(), "plan9/ppc") {
+		t.Errorf("error should list available platforms, got %v", err)
+	}
+}
+
+func TestResolveIndex_TargetPlatformIsParameter(t *testing.T) {
+	t.Parallel()
+
+	// The docker executor resolves for linux even on a darwin host —
+	// the platform is the caller's choice, not runtime.GOOS.
+	want := v1.Descriptor{Digest: "sha256:linux"}
+
+	index := v1.Index{
+		Manifests: []v1.Descriptor{
+			{Digest: "sha256:darwin", Platform: &v1.Platform{OS: "darwin", Architecture: runtime.GOARCH}},
+			{Digest: want.Digest, Platform: &v1.Platform{OS: "linux", Architecture: runtime.GOARCH}},
+		},
+	}
+
+	data, err := json.Marshal(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, isIndex, err := resolveIndex(data, LinuxPlatform())
+	if err != nil || !isIndex {
+		t.Fatalf("expected a linux match, got isIndex=%v err=%v", isIndex, err)
 	}
 
 	if got.Digest != want.Digest {
@@ -73,8 +107,8 @@ func TestResolveIndex_EmptyReturnsFalse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, ok := resolveIndex(data); ok {
-		t.Fatal("expected no match for empty index")
+	if _, isIndex, resolveErr := resolveIndex(data, HostPlatform()); isIndex || resolveErr != nil {
+		t.Fatalf("expected non-index verdict for empty index, got isIndex=%v err=%v", isIndex, resolveErr)
 	}
 }
 
@@ -88,8 +122,8 @@ func TestResolveIndex_NonIndexReturnsFalse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, ok := resolveIndex(data); ok {
-		t.Fatal("manifest should not match as index")
+	if _, isIndex, resolveErr := resolveIndex(data, HostPlatform()); isIndex || resolveErr != nil {
+		t.Fatalf("manifest should not match as index, got isIndex=%v err=%v", isIndex, resolveErr)
 	}
 }
 
@@ -107,7 +141,7 @@ func TestResolveManifest_PlainManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := ResolveManifest(ctx, store, desc)
+	got, err := ResolveManifest(ctx, store, desc, HostPlatform())
 	if err != nil {
 		t.Fatalf("ResolveManifest: %v", err)
 	}
@@ -143,7 +177,7 @@ func TestResolveManifest_FollowsIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := ResolveManifest(ctx, store, indexDesc)
+	got, err := ResolveManifest(ctx, store, indexDesc, HostPlatform())
 	if err != nil {
 		t.Fatalf("ResolveManifest: %v", err)
 	}

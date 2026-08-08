@@ -21,7 +21,7 @@ tasks:
       - go run github.com/vektra/mockery/v3@latest
     sources:
       - .mockery.yaml
-      - agent/**/*.go
+      - executor/**/*.go
       - oci/*.go
     generates:
       - mocks/**/*.go
@@ -42,12 +42,12 @@ tasks:
     cmds:
       - go test -race -covermode=atomic -coverprofile=coverage.out ./...
 
-  proto:gen:
+  test:integration:
     desc: |
-      Regenerate Go + gRPC bindings from executor/api/v1/agent.proto.
-      Requires `protoc` on PATH plus protoc-gen-go and
-      protoc-gen-go-grpc; install via `go install
-      google.golang.org/protobuf/cmd/protoc-gen-go@latest` and
-      `go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest`.
+      Run the opt-in executor e2e tests against a real runtime and model API.
+      Requires OTTERS_E2E_API_BASE (e.g. a local meridian proxy) and
+      OTTERS_E2E_RUNTIME_BIN; add OTTERS_E2E_RUNTIME_IMAGE for the docker
+      backend. Without them the tests skip. See ./integration package docs.
     cmds:
-      - protoc --proto_path=executor/api/v1 --go_out=executor/api/v1 --go_opt=paths=source_relative --go-grpc_out=executor/api/v1 --go-grpc_opt=paths=source_relative executor/api/v1/agent.proto
+      - go test -v ./integration
+

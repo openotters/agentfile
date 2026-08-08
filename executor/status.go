@@ -2,78 +2,31 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"sync"
 )
 
-// Status represents the lifecycle state of an agent.
+// Status is the lifecycle state of an agent.
 //
-// The state machine:
-//
-//	Pulling ── (cache hit) ──┐
-//	    │                    │
-//	    ▼                    ▼
-//	Starting ────────────► Failed (carries a FailureReason)
-//	    │                    ▲
-//	    ▼                    │
-//	Ready ◄──────────────────┤
-//	    │ ▲                  │
-//	    ▼ │                  │
-//	Working ─────────────────┘
-//	    │
-//	    ▼
-//	Stopped ── (Start) ──► Pulling
-//	    │
-//	    ▼
-//	Removing ──► Removed
-//
-// Pulling and Starting are emitted by the executor; Ready and Working
-// are owned by the daemon supervisor (probes Ready() / tracks
-// in-flight RPCs) and pushed into the tracker via Set.
+// Pulling and Starting are emitted by the executor; Ready and Working are
+// owned by the daemon supervisor (which probes Ready() and tracks in-flight
+// RPCs) and pushed in via Set. The tracker does not enforce transitions —
+// it records and broadcasts whatever the executor and supervisor set.
 type Status uint8
 
 const (
-	// StatusPulling — image / layers being downloaded into the local
-	// store. The slow phase when the cache is cold; a hit flips to
-	// StatusStarting almost immediately.
-	StatusPulling Status = iota
-
-	// StatusStarting — pull is done; workspace materialise, model
-	// resolution, and subprocess / container spawn happen here. The
-	// runtime has not yet acknowledged a readiness probe.
-	StatusStarting
-
-	// StatusReady — runtime answered the readiness probe. Idle,
-	// accepting RPCs. Set by the daemon supervisor, not the executor.
-	StatusReady
-
-	// StatusWorking — at least one chat turn or async-job RPC is in
-	// flight to this agent. Tracked daemon-side over the in-flight
-	// count and flipped back to Ready when the count drops to 0.
-	StatusWorking
-
-	// StatusStopped — user-initiated stop, or the subprocess /
-	// container exited (cleanly or otherwise). The daemon decides
-	// whether to retry (re-Run) or to flip to Failed+Crashed based on
-	// the exit context.
-	StatusStopped
-
-	// StatusFailed — terminal error. The companion FailureReason on
-	// the tracker carries the specific cause; surface it on the wire
-	// so operators see why.
-	StatusFailed
-
-	// StatusRemoving — cleanup in progress (workspace delete, container
-	// teardown).
-	StatusRemoving
-
-	// StatusRemoved — agent is fully gone; the row may still exist
-	// briefly before its persisted record is deleted.
-	StatusRemoved
+	StatusPulling  Status = iota // image and layers downloading into the local store
+	StatusStarting               // materialising the workspace and spawning the runtime
+	StatusReady                  // runtime answered the readiness probe; idle
+	StatusWorking                // at least one RPC in flight
+	StatusStopped                // subprocess or container exited, or user stopped it
+	StatusFailed                 // terminal error; see the companion FailureReason
+	StatusRemoving               // teardown in progress
+	StatusRemoved                // fully gone
 )
 
-// String returns the lowercase name of the Status — used for logs,
-// the daemon's wire format, and the `otters ps` STATUS column.
-// Unknown numeric values render as "unknown" rather than panicking.
+// String returns the lowercase status name used in logs, the wire format,
+// and the `otters ps` STATUS column.
 func (s Status) String() string {
 	switch s {
 	case StatusPulling:
@@ -97,43 +50,22 @@ func (s Status) String() string {
 	}
 }
 
-// FailureReason narrows StatusFailed to a specific cause. The
-// daemon surfaces it on the wire alongside the status string so
-// dashboards / the CLI can explain why the agent is in Failed.
+// FailureReason narrows StatusFailed to a specific cause, surfaced on the
+// wire alongside the status so operators can tell why an agent failed.
 type FailureReason uint8
 
 const (
-	// FailureNone is the zero value carried by non-Failed agents.
-	FailureNone FailureReason = iota
-
-	// FailurePull — the image (agent / runtime / a BIN) could not be
-	// pulled into the local store. Network, registry-auth, or
-	// missing-tag.
-	FailurePull
-
-	// FailureInit — workspace materialise or container create failed.
-	// Filesystem write, mount target collision, exec format errors.
-	FailureInit
-
-	// FailureModel — provider / model resolution failed. Missing
-	// provider config, bad API base, key rotation gone wrong.
-	FailureModel
-
-	// FailureReadinessTimeout — the runtime subprocess started but
-	// did not answer the daemon's Ready() probe within the timeout.
-	FailureReadinessTimeout
-
-	// FailureCrashed — the subprocess / container exited unexpectedly
-	// after having reached Ready. The daemon marks Failed+Crashed
-	// rather than retrying, since this is usually a code or config
-	// bug, not a transient blip.
-	FailureCrashed
+	FailureNone             FailureReason = iota // zero value on non-failed agents
+	FailurePull                                  // agent, runtime, or BIN image could not be pulled
+	FailureInit                                  // workspace materialise or container create failed
+	FailureConfig                                // a required CONFIG value was not provided
+	FailureModel                                 // provider or model resolution failed
+	FailureReadinessTimeout                      // runtime never answered the readiness probe
+	FailureCrashed                               // runtime exited unexpectedly after reaching Ready
 )
 
-// String returns the lowercase name of the FailureReason. Used in
-// the wire field (`AgentInfo.failure_reason`) and in CLI columns.
-// FailureNone returns the empty string so callers can render it as
-// "no failure" without a special-case branch.
+// String returns the lowercase reason name for the wire field and CLI
+// columns; FailureNone renders as the empty string.
 func (r FailureReason) String() string {
 	switch r {
 	case FailureNone:
@@ -142,6 +74,8 @@ func (r FailureReason) String() string {
 		return "pull"
 	case FailureInit:
 		return "init"
+	case FailureConfig:
+		return "config"
 	case FailureModel:
 		return "model"
 	case FailureReadinessTimeout:
@@ -153,13 +87,16 @@ func (r FailureReason) String() string {
 	}
 }
 
-// statusChanSize is the per-subscriber buffer. Slow subscribers may miss
-// intermediate transitions; only the latest Status is guaranteed observable
-// via Get().
+// ErrStatusClosed is returned by WaitForStatus when the subscription is
+// cancelled before a target status is observed.
+var ErrStatusClosed = errors.New("status subscription closed")
+
+// statusChanSize buffers each subscriber. Slow subscribers may miss
+// intermediate transitions; Get() always returns the latest status.
 const statusChanSize = 16
 
-// StatusTracker manages agent status (and its companion FailureReason)
-// and broadcasts transitions to subscribers.
+// StatusTracker records an agent's status and FailureReason and broadcasts
+// transitions to subscribers. Safe for concurrent use.
 type StatusTracker struct {
 	mu      sync.Mutex
 	status  Status
@@ -168,9 +105,8 @@ type StatusTracker struct {
 	subs    map[uint64]chan Status
 }
 
-// NewStatusTracker creates a new status tracker. The zero value is
-// StatusPulling (the first transition any Run() goes through), so
-// freshly-created Agents read pulling before they emit anything.
+// NewStatusTracker returns a tracker at StatusPulling (the first transition
+// every Run goes through).
 func NewStatusTracker() *StatusTracker {
 	return &StatusTracker{subs: make(map[uint64]chan Status)}
 }
@@ -183,8 +119,8 @@ func (t *StatusTracker) Get() Status {
 	return t.status
 }
 
-// Failure returns the current FailureReason. Meaningful only when
-// Get() == StatusFailed; otherwise the zero value (FailureNone).
+// Failure returns the current FailureReason, meaningful only when the status
+// is StatusFailed.
 func (t *StatusTracker) Failure() FailureReason {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -192,22 +128,55 @@ func (t *StatusTracker) Failure() FailureReason {
 	return t.failure
 }
 
-// Set updates the status and broadcasts to all subscribers. Clears
-// any prior FailureReason — moving out of Failed is always intentional.
-// Sends are non-blocking; a slow subscriber's channel may drop values.
+// Set records a status and broadcasts it. Moving out of StatusFailed clears
+// the FailureReason.
 func (t *StatusTracker) Set(s Status) {
 	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.setLocked(s, FailureNone)
+}
+
+// SetFailure records StatusFailed with a cause and broadcasts it.
+func (t *StatusTracker) SetFailure(reason FailureReason) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.setLocked(StatusFailed, reason)
+}
+
+// SetUnless records s unless the current status is one of the guard values,
+// and reports whether it did. It lets a caller set a status without clobbering
+// a concurrently-set terminal state — e.g. Run's cleanup sets Stopped unless
+// the supervisor already set Failed.
+func (t *StatusTracker) SetUnless(s Status, guard ...Status) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	for _, g := range guard {
+		if t.status == g {
+			return false
+		}
+	}
+
+	t.setLocked(s, FailureNone)
+
+	return true
+}
+
+// setLocked updates state and broadcasts while holding t.mu. Broadcasting
+// under the lock is what makes cancel's close race-free: a send can never
+// overlap the close, and the sends are non-blocking so the lock is never held
+// waiting on a slow reader.
+func (t *StatusTracker) setLocked(s Status, reason FailureReason) {
 	t.status = s
-	if s != StatusFailed {
+	if s == StatusFailed {
+		t.failure = reason
+	} else {
 		t.failure = FailureNone
 	}
-	subs := make([]chan Status, 0, len(t.subs))
-	for _, ch := range t.subs {
-		subs = append(subs, ch)
-	}
-	t.mu.Unlock()
 
-	for _, ch := range subs {
+	for _, ch := range t.subs {
 		select {
 		case ch <- s:
 		default:
@@ -215,31 +184,33 @@ func (t *StatusTracker) Set(s Status) {
 	}
 }
 
-// SetFailure marks the agent failed with a specific reason. Equivalent
-// to Set(StatusFailed) but carries the cause for downstream surfaces
-// (the daemon's wire field, the dashboard's badge tooltip, the CLI's
-// FAILURE column).
-func (t *StatusTracker) SetFailure(reason FailureReason) {
+// Subscribe returns a channel of transitions and a cancel function. Callers
+// must call cancel (typically via defer) to release the subscription.
+func (t *StatusTracker) Subscribe() (<-chan Status, func()) {
+	ch := make(chan Status, statusChanSize)
+
 	t.mu.Lock()
-	t.status = StatusFailed
-	t.failure = reason
-	subs := make([]chan Status, 0, len(t.subs))
-	for _, ch := range t.subs {
-		subs = append(subs, ch)
-	}
+	id := t.nextID
+	t.nextID++
+	t.subs[id] = ch
 	t.mu.Unlock()
 
-	for _, ch := range subs {
-		select {
-		case ch <- StatusFailed:
-		default:
-		}
+	var once sync.Once
+	cancel := func() {
+		once.Do(func() {
+			t.mu.Lock()
+			defer t.mu.Unlock()
+
+			delete(t.subs, id)
+			close(ch)
+		})
 	}
+
+	return ch, cancel
 }
 
-// WaitForStatus blocks until the observer reaches one of target or ctx is
-// cancelled. Returns the observed status on hit, or ctx.Err() otherwise.
-// The current status is checked first, so callers do not race the
+// WaitForStatus blocks until the observer reaches one of target, or ctx is
+// cancelled. It checks the current status first so callers do not race the
 // transition they are waiting for.
 func WaitForStatus(ctx context.Context, o StatusObserver, target ...Status) (Status, error) {
 	matches := func(s Status) bool {
@@ -263,7 +234,7 @@ func WaitForStatus(ctx context.Context, o StatusObserver, target ...Status) (Sta
 		select {
 		case s, ok := <-ch:
 			if !ok {
-				return 0, ctx.Err()
+				return 0, ErrStatusClosed
 			}
 
 			if matches(s) {
@@ -273,32 +244,4 @@ func WaitForStatus(ctx context.Context, o StatusObserver, target ...Status) (Sta
 			return 0, ctx.Err()
 		}
 	}
-}
-
-// Subscribe returns a channel of status transitions and a cancel function.
-// Cancel closes the channel and removes the subscription. Callers must call
-// cancel to avoid leaking the subscription; typical use is `defer cancel()`.
-func (t *StatusTracker) Subscribe() (<-chan Status, func()) {
-	ch := make(chan Status, statusChanSize)
-
-	t.mu.Lock()
-	id := t.nextID
-	t.nextID++
-	t.subs[id] = ch
-	t.mu.Unlock()
-
-	cancel := func() {
-		t.mu.Lock()
-		sub, ok := t.subs[id]
-		if ok {
-			delete(t.subs, id)
-		}
-		t.mu.Unlock()
-
-		if ok {
-			close(sub)
-		}
-	}
-
-	return ch, cancel
 }

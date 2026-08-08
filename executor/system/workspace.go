@@ -69,6 +69,11 @@ var ErrPull = fmt.Errorf("agent pull error")
 // ~/.otters/providers.yaml or a model not in the provider's allowlist.
 var ErrModel = fmt.Errorf("model resolve error")
 
+// ErrConfig indicates the resolved agent is not deployable as configured —
+// currently raised when a required CONFIG (trailing `!`) reaches materialise
+// time with no value (see spec.RequiredConfigsProvided).
+var ErrConfig = fmt.Errorf("agent config error")
+
 // workspace holds everything needed to materialize an agent workspace.
 type workspace struct {
 	store          oras.ReadOnlyTarget
@@ -132,11 +137,11 @@ func (w *workspace) materialize(
 	}
 
 	if e := w.installRuntime(ctx, fs, af); e != nil {
-		return nil, e
+		return nil, errors.Join(ErrPull, e)
 	}
 
 	if e := w.installTools(ctx, fs, af); e != nil {
-		return nil, e
+		return nil, errors.Join(ErrPull, e)
 	}
 
 	return rt, nil
@@ -158,7 +163,21 @@ func (w *workspace) materializeContent(
 		return nil, nil, errors.Join(ErrPull, fmt.Errorf("loading %s: %w", w.ref, err))
 	}
 
+	// Artifacts are untrusted input. Re-validate the loaded spec before using
+	// any of its names as filesystem paths — a crafted blob could otherwise
+	// traverse out of the agent tree, and a {} blob would nil-panic below.
+	// Validation runs before overrides, which legitimately set required-config
+	// values that Validate would reject on a bare declaration.
+	if err = spec.Validate(af); err != nil {
+		return nil, nil, errors.Join(ErrConfig, fmt.Errorf("invalid artifact %s: %w", w.ref, err))
+	}
+
 	af.Apply(w.overrides...)
+
+	// Unify the two mount channels — the executor-level WithMounts and the
+	// spec-level WithMounts override (RuntimeMounts) — so every downstream
+	// step (symlinks, MOUNTS.md, agent.yaml) sees the same set.
+	w.mounts = mergeMounts(w.mounts, af.Agent.RuntimeMounts)
 
 	for _, dir := range fhsDirs {
 		if mkdirErr := fs.MkdirAll(dir, 0o755); mkdirErr != nil {
@@ -384,7 +403,7 @@ func writeLayout(b *bytes.Buffer, p workspacePathSet, content workspaceContents)
 			if a == nil {
 				continue
 			}
-			writeTreeEntry(b, filepath.Base(a.Dst), a.Description)
+			writeTreeEntry(b, a.Name, a.Description)
 		}
 		for _, t := range content.Tools {
 			if t.Usage == "" {
@@ -537,25 +556,82 @@ func (w *workspace) applyMounts(fs billy.Filesystem) error {
 	}
 
 	for _, m := range w.mounts {
-		rel := strings.TrimPrefix(m.Target, "/")
-		if rel == "" {
-			return fmt.Errorf("mount target %q is empty", m.Target)
+		link, linkErr := mountLinkPath(root, m.Target)
+		if linkErr != nil {
+			return linkErr
 		}
 
-		link := filepath.Join(root, rel)
-
-		if err := w.hostFS.MkdirAll(filepath.Dir(link), 0o755); err != nil {
-			return fmt.Errorf("mount %s: %w", m.Target, err)
+		if mkErr := w.hostFS.MkdirAll(filepath.Dir(link), 0o755); mkErr != nil {
+			return fmt.Errorf("mount %s: %w", m.Target, mkErr)
 		}
 
 		_ = w.hostFS.Remove(link)
 
-		if err := w.hostFS.Symlink(m.Host, link); err != nil {
-			return fmt.Errorf("mount %s -> %s: %w", m.Target, m.Host, err)
+		if symErr := w.hostFS.Symlink(m.Host, link); symErr != nil {
+			return fmt.Errorf("mount %s -> %s: %w", m.Target, m.Host, symErr)
 		}
 	}
 
 	return w.writeMountsContext(fs)
+}
+
+// mountLinkPath resolves a mount target to an absolute path inside root and
+// rejects a target that escapes it, so a crafted `-v host:/../../x` cannot
+// delete or symlink over a host file outside the agent tree.
+func mountLinkPath(root, target string) (string, error) {
+	rel := strings.TrimPrefix(target, "/")
+	if rel == "" {
+		return "", fmt.Errorf("mount target %q is empty", target)
+	}
+
+	link := filepath.Join(root, rel)
+
+	within, err := filepath.Rel(root, link)
+	if err != nil || within == ".." || strings.HasPrefix(within, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("mount target %q escapes the agent root", target)
+	}
+
+	return link, nil
+}
+
+// mergeMounts appends the spec-level mounts onto the executor-level ones,
+// producing the effective mount set for an agent.
+func mergeMounts(base []executor.Mount, extra []*spec.Mount) []executor.Mount {
+	out := base
+	for _, m := range extra {
+		if m == nil {
+			continue
+		}
+
+		out = append(out, executor.Mount{
+			Host:        m.Host,
+			Target:      m.Target,
+			Description: m.Description,
+			ReadOnly:    m.ReadOnly,
+		})
+	}
+
+	return out
+}
+
+// mountsToSpec converts the effective mount set into the spec.Mount form
+// agent.yaml persists.
+func mountsToSpec(mounts []executor.Mount) []*spec.Mount {
+	if len(mounts) == 0 {
+		return nil
+	}
+
+	out := make([]*spec.Mount, len(mounts))
+	for i, m := range mounts {
+		out[i] = &spec.Mount{
+			Host:        m.Host,
+			Target:      m.Target,
+			Description: m.Description,
+			ReadOnly:    m.ReadOnly,
+		}
+	}
+
+	return out
 }
 
 // stampBinSymlinks creates one symlink per declared BIN at
@@ -647,36 +723,36 @@ func (w *workspace) extractLayers(ctx context.Context, fs billy.Filesystem, mani
 		}
 	}
 
-	for _, layer := range afstore.Layers(manifest, spec.ContextLayerMediaType) {
-		title := layer.Annotations[v1.AnnotationTitle]
-		if title == "" {
-			continue
-		}
-
-		data, err := afstore.FetchLayer(ctx, w.store, layer)
-		if err != nil {
-			return fmt.Errorf("fetching context %s: %w", title, err)
-		}
-
-		if e := util.WriteFile(fs, filepath.Join(contextDir, title), data, 0o644); e != nil {
-			return fmt.Errorf("writing context %s: %w", title, e)
-		}
+	if err := w.extractTitledLayers(ctx, fs, manifest, spec.ContextLayerMediaType, contextDir); err != nil {
+		return err
 	}
 
-	for _, layer := range afstore.Layers(manifest, spec.OctetStream) {
+	return w.extractTitledLayers(ctx, fs, manifest, spec.OctetStream, dataDir)
+}
+
+// extractTitledLayers writes each layer of mediaType into destDir under its
+// title. Layer titles come from an untrusted artifact, so a title that is not
+// a flat path-safe filename is rejected rather than allowed to traverse.
+func (w *workspace) extractTitledLayers(
+	ctx context.Context, fs billy.Filesystem, manifest *v1.Manifest, mediaType, destDir string,
+) error {
+	for _, layer := range afstore.Layers(manifest, mediaType) {
 		title := layer.Annotations[v1.AnnotationTitle]
 		if title == "" {
 			continue
 		}
 
-		data, err := afstore.FetchLayer(ctx, w.store, layer)
-		if err != nil {
-			return fmt.Errorf("fetching file %s: %w", title, err)
+		if !spec.IsPathSafeName(title) {
+			return fmt.Errorf("layer title %q is not a path-safe name", title)
 		}
 
-		dst := filepath.Base(title)
-		if e := util.WriteFile(fs, filepath.Join(dataDir, dst), data, 0o644); e != nil {
-			return fmt.Errorf("writing file %s: %w", dst, e)
+		data, fetchErr := afstore.FetchLayer(ctx, w.store, layer)
+		if fetchErr != nil {
+			return fmt.Errorf("fetching layer %s: %w", title, fetchErr)
+		}
+
+		if writeErr := util.WriteFile(fs, filepath.Join(destDir, title), data, 0o644); writeErr != nil {
+			return fmt.Errorf("writing layer %s: %w", title, writeErr)
 		}
 	}
 
@@ -761,6 +837,14 @@ func pullBin(ctx context.Context, puller agentoci.Puller, fs billy.Filesystem, r
 // function focused on filesystem materialisation steps; this one is
 // pure struct-construction (config-only, no I/O on fs).
 func (w *workspace) buildRuntime(af *spec.Agentfile, id uuid.UUID, addr string) (*executor.Runtime, error) {
+	// Deploy-time gate: a required CONFIG (`!`) with no value cannot be
+	// materialised. Parse-time validation deliberately allows it (the
+	// value is meant to arrive at deploy); this is where "deploy fails
+	// if no value is provided" is actually enforced.
+	if err := spec.RequiredConfigsProvided(af.Agent.Configs); err != nil {
+		return nil, errors.Join(ErrConfig, err)
+	}
+
 	rt := &executor.Runtime{
 		Source: af,
 		ResolvedConfig: executor.ResolvedConfig{
@@ -771,8 +855,8 @@ func (w *workspace) buildRuntime(af *spec.Agentfile, id uuid.UUID, addr string) 
 			Configs:      configsFromSpec(af.Agent.Configs),
 			Capabilities: w.capabilities,
 			Envs:         af.Agent.Envs,
-			Mounts:       af.Agent.RuntimeMounts,
-			Context:      contextEntries(af.Agent.Contexts, len(w.mounts) > 0 || len(af.Agent.RuntimeMounts) > 0),
+			Mounts:       mountsToSpec(w.mounts),
+			Context:      contextEntries(af.Agent.Contexts, len(w.mounts) > 0),
 			Addr:         addr,
 			Exec:         af.Agent.Exec,
 		},
@@ -833,10 +917,16 @@ func (w *workspace) buildRuntime(af *spec.Agentfile, id uuid.UUID, addr string) 
 // into the map[string]string shape agent.yaml carries — one
 // kebab-case key per CONFIG directive. Each value is rendered with
 // fmt.%v so booleans and numbers serialise consistently.
+//
+// Configs with no value (Value == nil) are skipped entirely rather
+// than emitted as the literal "<nil>": an optional CONFIG declared
+// without a default (e.g. `CONFIG custom-header`) simply doesn't
+// appear in the map. Required-but-unset configs never reach here —
+// buildRuntime rejects them via spec.RequiredConfigsProvided first.
 func configsFromSpec(in []*spec.Config) map[string]string {
 	out := map[string]string{}
 	for _, c := range in {
-		if c == nil || c.Key == "" {
+		if c == nil || c.Key == "" || c.Value == nil {
 			continue
 		}
 		out[c.Key] = fmt.Sprintf("%v", c.Value)

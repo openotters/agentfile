@@ -6,7 +6,38 @@ import (
 	"testing"
 
 	"github.com/openotters/agentfile/executor"
+	"github.com/openotters/agentfile/spec"
 )
+
+// TestConfigsFromSpec_SkipsNilValues guards the "<nil>" garbage bug:
+// a config with no value (optional declared without a default) must be
+// omitted from the materialised map, not rendered as the literal
+// string "<nil>". Set configs serialise normally.
+func TestConfigsFromSpec_SkipsNilValues(t *testing.T) {
+	t.Parallel()
+
+	got := configsFromSpec([]*spec.Config{
+		{Key: "max-tokens", Value: 1024},
+		{Key: "custom-header"}, // optional, no default → Value nil
+		nil,
+		{Key: "", Value: "x"}, // empty key skipped
+	})
+
+	if v, ok := got["max-tokens"]; !ok || v != "1024" {
+		t.Errorf("max-tokens = %q, ok=%v; want \"1024\"", v, ok)
+	}
+	if _, ok := got["custom-header"]; ok {
+		t.Errorf("nil-valued config must be skipped, got %q", got["custom-header"])
+	}
+	for _, v := range got {
+		if v == "<nil>" {
+			t.Errorf("map contains literal \"<nil>\": %v", got)
+		}
+	}
+	if len(got) != 1 {
+		t.Errorf("want exactly 1 entry, got %v", got)
+	}
+}
 
 func TestWorkspaceContextMarkdown_IncludesRoot(t *testing.T) {
 	t.Parallel()

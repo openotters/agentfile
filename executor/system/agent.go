@@ -6,60 +6,56 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 
 	"github.com/go-git/go-billy/v6"
+	"github.com/go-git/go-billy/v6/osfs"
 	"github.com/go-git/go-billy/v6/util"
 	"github.com/google/uuid"
-	"google.golang.org/grpc"
 
 	"github.com/openotters/agentfile/executor"
 )
 
-// Agent implements executor.Agent using local OS processes.
+// Agent implements executor.Agent using a local OS process.
+//
+// mu guards the mutable run state (rt, addr, the daemon-callback pair, and the
+// running/ran/cancel handshake). It is never held across slow I/O:
+// materialisation runs unlocked, and only the resulting descriptor is
+// published under the lock.
 type Agent struct {
 	id     uuid.UUID
 	fs     billy.Filesystem
 	ws     workspace
 	proc   process
-	rt     *executor.Runtime
-	addr   string
-	cmdFn  cmdFunc
-	dialer Dialer
-	// daemonURL + agentToken are injected into the spawn env so the
-	// runtime knows where to dial the openotters daemon and what
-	// JWT to present. Both empty by default — agents whose author
-	// doesn't want to expose the daemon path simply don't pass
-	// these options at construction. daemonURL is the dial target
-	// (e.g. unix:///tmp/otters.sock); injected as-is into
-	// OTTERSD_URL.
-	daemonURL  string
-	agentToken string
-
-	initMu      sync.Mutex
-	initialized bool
-	ran         chan struct{}
-
-	clientMu   sync.Mutex
-	clientConn *grpc.ClientConn
-
 	status *executor.StatusTracker
+
+	mu          sync.Mutex
+	rt          *executor.Runtime
+	addr        string
+	daemonURL   string
+	agentToken  string
+	initialized bool
+	running     bool
+	ran         chan struct{}
+	cancel      context.CancelFunc
+
+	logCloser io.Closer
 }
 
 // NewAgent creates a system agent.
 func NewAgent(id uuid.UUID, fs billy.Filesystem, opts ...AgentOption) *Agent {
 	a := &Agent{
-		id: id,
-		fs: fs,
-		proc: process{
-			spawner: defaultSpawner{},
-			stdout:  os.Stdout,
-			stderr:  os.Stderr,
-		},
-		dialer: defaultDialer{},
+		id:     id,
+		fs:     fs,
+		proc:   process{spawner: defaultSpawner{}, stdout: os.Stdout, stderr: os.Stderr},
 		status: executor.NewStatusTracker(),
 	}
+
+	// Real host filesystem by default so callers using WithAgentLocalRuntime
+	// outside a Provider don't hit a nil hostFS; tests override with memfs.
+	a.ws.hostFS = osfs.New("/")
 
 	for _, opt := range opts {
 		opt(a)
@@ -68,57 +64,50 @@ func NewAgent(id uuid.UUID, fs billy.Filesystem, opts ...AgentOption) *Agent {
 	return a
 }
 
-// UUID returns the agent's stable identifier, unchanged across
-// Start/Stop/Restore cycles.
+// UUID returns the agent's stable identifier.
 func (a *Agent) UUID() uuid.UUID { return a.id }
 
-// Runtime returns the resolved runtime descriptor populated at
-// Prepare/materialize time. Nil before Prepare has succeeded.
-func (a *Agent) Runtime() *executor.Runtime { return a.rt }
+// Runtime returns the resolved runtime descriptor, or nil before Prepare.
+func (a *Agent) Runtime() *executor.Runtime {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 
-// Addr returns the loopback host:port the runtime subprocess will
-// bind (reserved by the Provider's LoopbackAllocator at Create).
-// Empty on agents constructed without WithAddr and before Prepare.
-func (a *Agent) Addr() string { return a.addr }
+	return a.rt
+}
 
-// Status returns the current lifecycle state. Safe for concurrent
-// access with Start/Stop/Remove.
+// Addr returns the loopback host:port the runtime binds.
+func (a *Agent) Addr() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	return a.addr
+}
+
+// Status returns the current lifecycle state.
 func (a *Agent) Status() executor.Status { return a.status.Get() }
 
-// FailureReason returns the cause when Status() == StatusFailed.
-// Returns FailureNone for non-failed states.
+// FailureReason returns the cause when Status is StatusFailed.
 func (a *Agent) FailureReason() executor.FailureReason { return a.status.Failure() }
 
-// StatusTracker exposes the underlying tracker. The daemon supervisor
-// uses it for the Ready / Working / readiness-timeout / crashed
-// transitions it owns; tests reach for it to assert specific
-// sequences without coupling to the Set/SetFailure call sites.
+// StatusTracker exposes the tracker for the daemon supervisor's Ready/Working
+// transitions and for tests.
 func (a *Agent) StatusTracker() *executor.StatusTracker { return a.status }
 
-// SubscribeStatus returns a channel of status transitions and a
-// cancel function. Sends are non-blocking; slow subscribers may miss
-// intermediate transitions — call Status() to resync. Always call
-// cancel to avoid leaking the subscription.
+// SubscribeStatus returns a channel of status transitions and a cancel function.
 func (a *Agent) SubscribeStatus() (<-chan executor.Status, func()) {
 	return a.status.Subscribe()
 }
 
-// SetAgentToken swaps the JWT injected into the runtime's spawn env
-// on subsequent Run/Start calls. The currently-running process keeps
-// its current token until restart; the openotters daemon's refresh
-// path always pairs this with a Stop+Start so the new value reaches
-// the runtime. Guarded by initMu — the same lock that serialises
-// every other read of a.agentToken via buildCmdFn.
+// SetAgentToken swaps the JWT injected into the spawn env. The running process
+// keeps its token until restart; the next Run reads the new value.
 func (a *Agent) SetAgentToken(token string) {
-	a.initMu.Lock()
+	a.mu.Lock()
 	a.agentToken = token
-	a.initMu.Unlock()
+	a.mu.Unlock()
 }
 
-// ReapplyMounts re-runs the chroot symlink step + MOUNTS.md context
-// write against the agent's existing filesystem. Used by Daemon.Restore
-// for agents loaded from disk (which skip materialize), so mounts
-// survive a daemon restart without requiring a full rebuild.
+// ReapplyMounts re-runs the mount symlink and MOUNTS.md steps against the
+// existing filesystem, so mounts survive a daemon restart without a rebuild.
 func (a *Agent) ReapplyMounts() error {
 	if len(a.ws.mounts) == 0 {
 		return nil
@@ -127,24 +116,12 @@ func (a *Agent) ReapplyMounts() error {
 	return a.ws.applyMounts(a.fs)
 }
 
-// Prepare materializes the workspace synchronously. Idempotent and safe to
-// call concurrently; repeat callers observe the same error.
-//
-// Status transitions on the way through:
-//   - On entry: Pulling (set by Run; Prepare leaves it alone so a
-//     standalone Prepare call still surfaces the pull window).
-//   - On success: caller (Run) flips to Starting.
-//   - On error: Failed with a FailureReason derived from the error
-//     sentinel (FailurePull / FailureModel / FailureInit).
+// Prepare materialises the workspace, mapping the failure to a FailureReason —
+// unless ctx was cancelled (a deliberate Stop), which endRun settles to Stopped.
 func (a *Agent) Prepare(ctx context.Context) error {
 	if err := a.initialize(ctx); err != nil {
-		switch {
-		case errors.Is(err, ErrPull):
-			a.status.SetFailure(executor.FailurePull)
-		case errors.Is(err, ErrModel):
-			a.status.SetFailure(executor.FailureModel)
-		default:
-			a.status.SetFailure(executor.FailureInit)
+		if ctx.Err() == nil {
+			a.status.SetFailure(failureReasonFor(err))
 		}
 
 		return err
@@ -153,47 +130,75 @@ func (a *Agent) Prepare(ctx context.Context) error {
 	return nil
 }
 
-// Run materializes the workspace (if needed), starts the serve process, and blocks.
+// Run materialises the workspace (if needed) and blocks on the runtime process
+// until it exits or ctx is cancelled. Only one Run may be in flight at a time.
 //
-// Lifecycle: Pulling (entry) → Starting (after Prepare returns) →
-// (daemon supervisor flips to Ready once the readiness probe answers)
-// → Stopped on subprocess exit (the daemon decides whether to retry
-// or mark Failed+FailureCrashed).
+// Lifecycle: Pulling → Starting → (supervisor sets Ready) → Stopped on exit.
+// The cancel/ran handshake is installed before Prepare, so a Stop during the
+// pull window cancels the run instead of silently no-op'ing.
 func (a *Agent) Run(ctx context.Context) error {
+	ctx, ran, err := a.beginRun(ctx)
+	if err != nil {
+		return err
+	}
+	defer a.endRun(ran)
+
 	a.status.Set(executor.StatusPulling)
 
-	if err := a.Prepare(ctx); err != nil {
-		return err
+	if prepErr := a.Prepare(ctx); prepErr != nil {
+		return prepErr
 	}
 
 	a.status.Set(executor.StatusStarting)
 
-	ran := make(chan struct{})
-	a.setRan(ran)
-
-	defer func() {
-		close(ran)
-		// Preserve Failed: anything inside proc.serve that set a
-		// FailureReason should outlive this unconditional clean-up.
-		if a.status.Get() != executor.StatusFailed {
-			a.status.Set(executor.StatusStopped)
-		}
-	}()
-
-	return a.proc.serve(ctx, a.cmdFn)
+	return a.proc.serve(ctx, a.command())
 }
 
-// Start re-runs a stopped (or failed) agent. Blocks until the
-// subprocess exits or ctx is cancelled (same contract as Run).
-// Returns an error if the agent is already pulling / starting /
-// ready / working / removed. The loopback address from the original
-// Create is reused.
-//
-// Before re-running, Start re-invokes the model resolver against the
-// agent's resolved model, so providers.yaml edits made between Stop
-// and Start (key rotation, api-base change) take effect on the next
-// subprocess. Fresh agents (still in StatusPulling) bypass this branch
-// — Run → Prepare → materialize will resolve on its own.
+// beginRun installs the run's cancellable context and ran channel, rejecting a
+// concurrent Run.
+func (a *Agent) beginRun(ctx context.Context) (context.Context, chan struct{}, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if a.running {
+		return nil, nil, fmt.Errorf("agent already running")
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	ran := make(chan struct{})
+	a.running = true
+	a.cancel = cancel
+	a.ran = ran
+
+	return runCtx, ran, nil
+}
+
+// endRun clears the run state, closes ran, and settles the status to Stopped
+// unless a terminal failure was already recorded.
+func (a *Agent) endRun(ran chan struct{}) {
+	a.mu.Lock()
+	a.running = false
+	a.cancel = nil
+	a.ran = nil
+	a.mu.Unlock()
+
+	// Settle the status before releasing waiters, so a Stop/Remove blocked on
+	// ran cannot race the settle and flip a removed agent back to stopped.
+	a.status.SetUnless(executor.StatusStopped, executor.StatusFailed, executor.StatusRemoving, executor.StatusRemoved)
+	close(ran)
+}
+
+// command builds the runtime Cmd from live state, so a token rotated between
+// runs reaches the next spawn.
+func (a *Agent) command() Cmd {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	return a.proc.command(a.rt, a.fs.Root(), a.daemonURL, a.agentToken)
+}
+
+// Start re-runs a stopped or failed agent, re-resolving model credentials first
+// so a providers.yaml edit takes effect on the next subprocess.
 func (a *Agent) Start(ctx context.Context) error {
 	switch a.Status() {
 	case executor.StatusPulling, executor.StatusStarting,
@@ -202,7 +207,6 @@ func (a *Agent) Start(ctx context.Context) error {
 	case executor.StatusRemoving, executor.StatusRemoved:
 		return fmt.Errorf("agent removed")
 	case executor.StatusStopped, executor.StatusFailed:
-		// startable: fall through
 	}
 
 	if err := a.reresolveCredentials(); err != nil {
@@ -214,39 +218,45 @@ func (a *Agent) Start(ctx context.Context) error {
 	return a.Run(ctx)
 }
 
-// reresolveCredentials re-runs the model resolver against the agent's
-// already-resolved model and updates rt.APIBase / rt.APIKey in place.
-// process.buildCmdArgs reads both fields on every closure invocation,
-// so the next subprocess sees the fresh values without rebuilding cmdFn.
-//
-// No-op when there is no rt yet (StatusCreated agents take the
-// Run → Prepare → materialize path), no resolver was wired, or the
-// model has no provider prefix.
+// reresolveCredentials refreshes rt.APIBase/APIKey from the model resolver.
+// No-op before Prepare, without a resolver, or for a provider-less model. The
+// resolver runs without the lock held; only the field writes are guarded.
 func (a *Agent) reresolveCredentials() error {
-	if a.rt == nil || a.ws.modelResolver == nil || a.rt.Model == "" {
+	a.mu.Lock()
+	rt := a.rt
+	resolver := a.ws.modelResolver
+	a.mu.Unlock()
+
+	if rt == nil || resolver == nil || rt.Model == "" {
 		return nil
 	}
 
-	apiBase, apiKey, err := a.ws.modelResolver(a.rt.Model)
+	apiBase, apiKey, err := resolver(rt.Model)
 	if err != nil {
-		return errors.Join(ErrModel,
-			fmt.Errorf("re-resolving model %q: %w", a.rt.Model, err))
+		return errors.Join(ErrModel, fmt.Errorf("re-resolving model %q: %w", rt.Model, err))
 	}
 
+	a.mu.Lock()
 	a.rt.APIBase = apiBase
 	a.rt.APIKey = apiKey
+	a.mu.Unlock()
 
 	return nil
 }
 
-// Stop signals the running agent to exit and blocks until Run has returned
-// or ctx is cancelled. Returns ctx.Err() if ctx is cancelled before Run
-// finishes. A no-op if the agent is not running.
+// Stop cancels the run and blocks until Run returns or ctx is cancelled. It is
+// effective in every phase — pull, materialise, or serve — because it cancels
+// the run context installed by beginRun. A no-op if the agent is not running.
 func (a *Agent) Stop(ctx context.Context) error {
-	a.proc.stop()
-	a.closeClient()
+	a.mu.Lock()
+	cancel := a.cancel
+	ran := a.ran
+	a.mu.Unlock()
 
-	ran := a.getRan()
+	if cancel != nil {
+		cancel()
+	}
+
 	if ran == nil {
 		return nil
 	}
@@ -259,24 +269,22 @@ func (a *Agent) Stop(ctx context.Context) error {
 	}
 }
 
-// Remove deletes the agent's workspace directory. Callers must Stop first;
-// Remove does not stop a running agent. Returns any filesystem error.
+// Remove stops the agent (if running) and deletes its workspace directory.
 func (a *Agent) Remove(ctx context.Context) error {
+	if err := a.Stop(ctx); err != nil {
+		return err
+	}
+
 	a.status.Set(executor.StatusRemoving)
-	a.closeClient()
 
-	if a.fs == nil {
-		a.status.Set(executor.StatusRemoved)
-
-		return nil
+	if a.logCloser != nil {
+		_ = a.logCloser.Close()
 	}
 
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
-	if err := util.RemoveAll(a.fs, "."); err != nil {
-		return err
+	if a.fs != nil {
+		if err := util.RemoveAll(a.fs, "."); err != nil {
+			return fmt.Errorf("removing workspace: %w", err)
+		}
 	}
 
 	a.status.Set(executor.StatusRemoved)
@@ -284,61 +292,57 @@ func (a *Agent) Remove(ctx context.Context) error {
 	return nil
 }
 
-func (a *Agent) setRan(ch chan struct{}) {
-	a.proc.mu.Lock()
-	a.ran = ch
-	a.proc.mu.Unlock()
-}
-
-func (a *Agent) getRan() chan struct{} {
-	a.proc.mu.Lock()
-	defer a.proc.mu.Unlock()
-
-	return a.ran
-}
-
-// initialize materializes the workspace and builds the command function.
-// Serialised; concurrent callers wait on initMu. Successful inits are
-// cached (initialized=true) and skipped on subsequent calls. Failures
-// are NOT cached — the next caller retries materialize, so a fresh
-// providers.yaml can unstick a model_error agent on the next Start.
+// initialize materialises the workspace once and publishes the runtime
+// descriptor. Failures are not cached, so a fixed providers.yaml unsticks a
+// model_error agent on the next Start. The slow materialise runs unlocked.
 func (a *Agent) initialize(ctx context.Context) error {
-	a.initMu.Lock()
-	defer a.initMu.Unlock()
+	a.mu.Lock()
+	done := a.initialized
+	addr := a.addr
+	a.mu.Unlock()
 
-	if a.initialized {
+	if done {
 		return nil
 	}
 
-	rt, err := a.ws.materialize(ctx, a.fs, a.id, a.addr)
+	rt, err := a.ws.materialize(ctx, a.fs, a.id, addr)
 	if err != nil {
 		return err
 	}
 
-	a.cmdFn = a.proc.buildCmdFn(rt, a.fs.Root(), a.daemonURL, a.agentToken)
-	a.rt = rt
-	a.initialized = true
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if !a.initialized {
+		a.rt = rt
+		a.initialized = true
+	}
 
 	return nil
 }
 
-// markInitialized lets Provider.Load bind an already-materialized runtime
-// onto an Agent, skipping future ws.materialize calls. Restores a.addr
-// from the persisted runtime so Prompt can reach the gRPC server.
-// Idempotent: subsequent calls are a no-op once initialized is set.
+// markInitialized binds an already-materialised runtime onto an Agent, so
+// Provider.Load can recover agents from disk without re-materialising.
 func (a *Agent) markInitialized(rt *executor.Runtime) {
-	a.initMu.Lock()
-	defer a.initMu.Unlock()
+	a.mu.Lock()
+	defer a.mu.Unlock()
 
-	if a.initialized {
-		return
+	if !a.initialized {
+		a.rt = rt
+		a.initialized = true
 	}
+}
 
-	if rt.Addr != "" && a.addr == "" {
-		a.addr = rt.Addr
+// failureReasonFor maps a materialise error to its FailureReason.
+func failureReasonFor(err error) executor.FailureReason {
+	switch {
+	case errors.Is(err, ErrPull):
+		return executor.FailurePull
+	case errors.Is(err, ErrModel):
+		return executor.FailureModel
+	case errors.Is(err, ErrConfig):
+		return executor.FailureConfig
+	default:
+		return executor.FailureInit
 	}
-
-	a.cmdFn = a.proc.buildCmdFn(rt, a.fs.Root(), a.daemonURL, a.agentToken)
-	a.rt = rt
-	a.initialized = true
 }

@@ -194,6 +194,37 @@ func TestAppendConfigEnv_EmptyOrNilLeavesBaseUntouched(t *testing.T) {
 	}
 }
 
+// TestEnvOverridesConfigOnCollision pins the precedence contract: the
+// executors apply AppendConfigEnv (CONFIG's RUNTIME_* export) BEFORE
+// AppendUserEnv (declared ENV), so a deliberate RUNTIME_*-prefixed ENV
+// overrides the CONFIG-derived value under last-write-wins. ENV beats
+// CONFIG on a same-name collision.
+func TestEnvOverridesConfigOnCollision(t *testing.T) {
+	t.Parallel()
+
+	base := []string{"PATH=/usr/bin"}
+
+	// CONFIG max-tokens=2048 → RUNTIME_MAX_TOKENS=2048
+	env := executor.AppendConfigEnv(base, map[string]string{"max-tokens": "2048"})
+	// ENV RUNTIME_MAX_TOKENS=99 targets the same resulting variable.
+	env, skipped := executor.AppendUserEnv(env, []*spec.Env{{Key: "RUNTIME_MAX_TOKENS", Value: "99"}})
+
+	if len(skipped) != 0 {
+		t.Fatalf("RUNTIME_-prefixed ENV must not be filtered, skipped=%v", skipped)
+	}
+
+	// Last occurrence wins; the ENV value must be the effective one.
+	var last string
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "RUNTIME_MAX_TOKENS=") {
+			last = kv
+		}
+	}
+	if last != "RUNTIME_MAX_TOKENS=99" {
+		t.Errorf("effective RUNTIME_MAX_TOKENS = %q, want ENV value (99) to win; full env=%v", last, env)
+	}
+}
+
 func TestBuildLockedEnv_NoHostInheritance(t *testing.T) {
 	// Spike a host env var BuildLockedEnv must NOT pass through.
 	// No t.Parallel — Setenv mutates the test process env.

@@ -31,7 +31,7 @@ specific lifecycle requirements. The Agentfile is purpose-built for what agents 
 | **System prompt**     | Doesn't exist                                   | `CONTEXT SOUL <<EOF ... EOF` — versioned, inheritable, composable                             |
 | **Typed config**      | `ENV KEY=value` (strings only)                  | `CONFIG max-tokens=1024` — int, float, bool, string with validation                           |
 | **Inheritance**       | `FROM` copies layers (build-time)               | `FROM parent-agent` merges contexts, tools, configs (semantic)                                |
-| **Runtime contract**  | Any process, any protocol                       | gRPC API (`agent/api/v1/agent.proto`) — Chat, Stream, Health, Ready                           |
+| **Runtime contract**  | Any process, any protocol                       | A declared runtime environment; the wire protocol is the orchestrator's (A2A)                 |
 | **Secrets**           | Leaked into layers, need multi-stage builds     | Never in artifact — `MODEL` names the model, keys are injected at runtime                     |
 | **Capabilities**      | Full Linux, must `drop` manually                | Zero by default — each `BIN` grants exactly one tool                                          |
 | **Distribution**      | OCI image (layers, filesystem)                  | OCI artifact (structured: config blob + typed layers)                                         |
@@ -59,7 +59,7 @@ EOF
 BIN wget ghcr.io/openotters/tools/wget:latest "Fetch URL content"
 BIN jq   ghcr.io/openotters/tools/jq:latest  "Extract fields from JSON"
 
-ADD cities.json /data/cities.json "Known cities"
+ADD cities.json "Known cities"
 
 EXEC ["serve"]
 ```
@@ -100,7 +100,7 @@ CONFIG temperature=0.7
 BIN wget ghcr.io/openotters/tools/wget:latest "Fetch URL content"
 BIN jq   ghcr.io/openotters/tools/jq:latest  "Extract fields from JSON"
 
-ADD cities.json /data/cities.json "Known cities"
+ADD cities.json "Known cities"
 
 EXEC ["serve"]
 
@@ -155,8 +155,8 @@ See [`examples/`](examples/) for the full list.
 - **Sandboxed filesystem layout** — `etc/` and `usr/bin/` are designed read-only, `workspace/` and `tmp/` are
   read-write.
 - **Auditable** — the full capability set is visible in the Agentfile and preserved in the OCI config blob.
-- **Runtime API contract** — runtimes must implement a defined gRPC API (`agent/api/v1/agent.proto`). No arbitrary
-  process execution.
+- **Declared runtime environment** — runtimes boot into a defined filesystem, config, and env contract; the
+  wire protocol they then serve is the orchestrator's concern (openotters uses A2A). No arbitrary process execution.
 
 **Not yet enforced (requires containerized executor):**
 

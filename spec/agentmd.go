@@ -2,7 +2,6 @@ package spec
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 )
 
@@ -48,7 +47,7 @@ func GenerateAgentMD(af *Agentfile, id string, caps []Capability) string {
 				desc = "-"
 			}
 
-			fmt.Fprintf(&b, "| %s | %s |\n", filepath.Base(add.Dst), desc)
+			fmt.Fprintf(&b, "| %s | %s |\n", add.Name, desc)
 		}
 
 		b.WriteByte('\n')

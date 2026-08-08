@@ -57,23 +57,17 @@ type Agent interface {
 	Remove(ctx context.Context) error
 
 	// StatusTracker exposes the underlying tracker so the daemon
-	// supervisor can drive transitions it owns (Ready after the
-	// readiness probe answers, Working ↔ Ready around in-flight RPCs,
-	// Failed+FailureReadinessTimeout on probe timeout, Failed+
-	// FailureCrashed on unexpected exit). Executors mutate their own
-	// status through this same tracker for the Pulling / Starting /
-	// Stopped / Failed transitions they own.
+	// supervisor can drive transitions it owns (Ready, Working ↔ Ready,
+	// Failed+FailureReadinessTimeout, Failed+FailureCrashed). Executors
+	// mutate their own status through this same tracker for the Pulling /
+	// Starting / Stopped / Failed transitions they own.
 	StatusTracker() *StatusTracker
 
-	// Probe issues a single readiness check against the running
-	// runtime. Returns nil when the runtime answered Ready=true.
-	// Returns a non-nil error when the dial fails, the call returns
-	// Unavailable, or ctx expires.
-	//
-	// Used by the daemon supervisor to gate the Starting → Ready
-	// transition. Implementations should not retry internally — the
-	// caller owns the backoff and the overall timeout.
-	Probe(ctx context.Context) error
+	// Addr returns the loopback host:port the runtime binds its server on
+	// (reserved by the executor at Create). The orchestrator dials this to
+	// talk to the runtime; the wire protocol is the orchestrator's concern,
+	// not the executor's. Empty before the address is assigned.
+	Addr() string
 
 	// Exec runs a BIN command in this agent's spawn env: same image,
 	// same BIN namespace on PATH, agent workspace as cwd. Implementations

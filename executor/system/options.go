@@ -184,6 +184,12 @@ func WithStderr(w io.Writer) AgentOption {
 	return func(a *Agent) { a.proc.stderr = w }
 }
 
+// withLogCloser hands the agent a closer for its log file, closed on Remove so
+// the descriptor does not leak across the daemon's lifetime.
+func withLogCloser(c io.Closer) AgentOption {
+	return func(a *Agent) { a.logCloser = c }
+}
+
 // WithAddr sets the gRPC listen address for the agent.
 func WithAddr(addr string) AgentOption {
 	return func(a *Agent) { a.addr = addr }
@@ -222,13 +228,4 @@ func WithMounts(m []executor.Mount) AgentOption {
 // without spawning anything real.
 func WithSpawner(s Spawner) AgentOption {
 	return func(a *Agent) { a.proc.spawner = s }
-}
-
-// WithDialer overrides the gRPC dialer used to reach the runtime
-// subprocess. Production uses defaultDialer (grpc.NewClient +
-// WaitForStateChange until Ready); tests inject a bufconn-backed
-// dialer so Prompt / PromptStream / PromptObject /
-// ListSessionMessages can be exercised without a real subprocess.
-func WithDialer(d Dialer) AgentOption {
-	return func(a *Agent) { a.dialer = d }
 }

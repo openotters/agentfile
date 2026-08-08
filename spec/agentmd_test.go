@@ -18,8 +18,8 @@ func TestGenerateAgentMD(t *testing.T) {
 			{Name: "jq"},
 		},
 		Adds: []*spec.Add{
-			{Dst: "/data/cities.json", Description: "city coords"},
-			{Dst: "/data/flags.bin"},
+			{Name: "cities.json", Description: "city coords"},
+			{Name: "flags.bin"},
 		},
 		Envs: []*spec.Env{
 			{Key: "NODE_ENV", Value: "production", Description: "App env"},

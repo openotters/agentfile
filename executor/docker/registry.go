@@ -409,20 +409,19 @@ func isNotFoundErr(err error) bool {
 	if err == nil {
 		return false
 	}
-	// Best-effort string match. The SDK's typed
-	// errdefs.IsNotFound would be cleaner; revisit when we wire
-	// errdefs across the codebase.
+
+	// Prefer the SDK's typed not-found signal; fall back to matching the
+	// daemon's specific "no such image/container" strings (but not a bare
+	// "not found", which appears in unrelated transport errors).
+	var notFound interface{ NotFound() bool }
+	if errors.As(err, &notFound) && notFound.NotFound() {
+		return true
+	}
+
 	msg := strings.ToLower(err.Error())
 	switch {
 	case strings.Contains(msg, "no such image"),
-		strings.Contains(msg, "no such container"),
-		strings.Contains(msg, "not found"):
-		return true
-	}
-	// Also wrap other errdefs-style not-found via errors.Is if the
-	// SDK gains them.
-	var notFound interface{ NotFound() bool }
-	if errors.As(err, &notFound) && notFound.NotFound() {
+		strings.Contains(msg, "no such container"):
 		return true
 	}
 	return false

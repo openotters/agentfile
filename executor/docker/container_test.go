@@ -121,8 +121,7 @@ func TestContainerSpec_BuildHostConfig(t *testing.T) {
 		UserMounts: []executor.Mount{
 			{Host: "/host/data", Target: "/data"},
 		},
-		HostGRPCPort:  "65432",
-		NetworkAccess: true,
+		HostGRPCPort: "65432",
 	}
 
 	hc := cs.buildHostConfig()

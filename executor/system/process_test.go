@@ -72,25 +72,11 @@ func TestBuildCmdArgs_Addr(t *testing.T) {
 	}
 }
 
-func TestBuildCmdArgs_ExtraArgsAppended(t *testing.T) {
-	t.Parallel()
-
-	got := buildCmdArgs(&executor.Runtime{
-		ResolvedConfig: executor.ResolvedConfig{Model: "m"},
-	}, "/root", "--debug", "msg")
-
-	want := []string{"serve", "--root", "/root", "--model", "m", "--debug", "msg"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("got %q\nwant %q", got, want)
-	}
-}
-
 func TestBuildCmdArgs_FullComposition(t *testing.T) {
 	t.Parallel()
 
-	// Exec + base flags + addr + extras — credentials are excluded by
-	// design (see TestBuildCmdArgs_DoesNotEmitCredentialFlags); they
-	// flow through buildCmdEnv instead.
+	// Exec + base flags + addr; credentials are excluded by design (see
+	// TestBuildCmdArgs_DoesNotEmitCredentialFlags) — they flow via the env.
 	got := buildCmdArgs(&executor.Runtime{
 		ResolvedConfig: executor.ResolvedConfig{
 			Model:   "openai/gpt-4",
@@ -99,14 +85,13 @@ func TestBuildCmdArgs_FullComposition(t *testing.T) {
 			Addr:    "127.0.0.1:1234",
 			Exec:    []string{"serve"},
 		},
-	}, "/root", "--trace")
+	}, "/root")
 
 	want := []string{
 		"serve",
 		"--root", "/root",
 		"--model", "openai/gpt-4",
 		"--addr", "127.0.0.1:1234",
-		"--trace",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %q\nwant %q", got, want)
@@ -314,10 +299,10 @@ func TestBuildCmdArgs_DoesNotMutateRuntimeExec(t *testing.T) {
 	rt := &executor.Runtime{
 		ResolvedConfig: executor.ResolvedConfig{Model: "m", Exec: []string{"serve"}},
 	}
-	_ = buildCmdArgs(rt, "/root", "--first")
-	second := buildCmdArgs(rt, "/root", "--second")
+	_ = buildCmdArgs(rt, "/root")
+	second := buildCmdArgs(rt, "/root")
 
-	want := []string{"serve", "--root", "/root", "--model", "m", "--second"}
+	want := []string{"serve", "--root", "/root", "--model", "m"}
 	if !reflect.DeepEqual(second, want) {
 		t.Fatalf("second call contaminated: got %q want %q", second, want)
 	}

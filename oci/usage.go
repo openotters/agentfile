@@ -21,18 +21,10 @@ import (
 // failure path.
 //
 // Parallel in shape to Puller: a function value the consumer wires
-// into the executor pipeline, with `NoopUsageFetcher` for tests and
-// `RemoteUsageFetcher` for production.
+// into the executor pipeline — `RemoteUsageFetcher` for production, or
+// nil to skip usage fetching entirely (tests / offline mode; the
+// materialiser treats a nil fetcher as "no usage docs").
 type UsageFetcher func(ctx context.Context, ref spec.Reference) (string, error)
-
-// NoopUsageFetcher returns a fetcher that always reports "no usage
-// doc" — useful in tests that exercise the materialisation pipeline
-// without standing up a registry.
-func NoopUsageFetcher() UsageFetcher {
-	return func(_ context.Context, _ spec.Reference) (string, error) {
-		return "", nil
-	}
-}
 
 // RemoteUsageFetcher mirrors RemotePuller for the documentation
 // layer: resolves ref against a real registry, parses the manifest,
@@ -40,7 +32,7 @@ func NoopUsageFetcher() UsageFetcher {
 // `io.openotters.bin.usage` annotation. The annotation defaults to
 // `/USAGE.md` (see spec.DefaultUsagePath) but producers may pick a
 // different path; this fetcher honours whatever the producer wrote.
-func RemoteUsageFetcher(opts ...RemoteRepositoryOption) UsageFetcher {
+func RemoteUsageFetcher(platform v1.Platform, opts ...RemoteRepositoryOption) UsageFetcher {
 	return func(ctx context.Context, ref spec.Reference) (string, error) {
 		repo, err := NewRemoteRepository(ref, opts...)
 		if err != nil {
@@ -57,7 +49,7 @@ func RemoteUsageFetcher(opts ...RemoteRepositoryOption) UsageFetcher {
 			return "", fmt.Errorf("resolving %s: %w", ref, err)
 		}
 
-		manifest, err := ResolveManifest(ctx, repo, desc)
+		manifest, err := ResolveManifest(ctx, repo, desc, platform)
 		if err != nil {
 			return "", err
 		}

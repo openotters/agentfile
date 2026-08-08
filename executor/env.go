@@ -2,6 +2,7 @@ package executor
 
 import (
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -17,10 +18,11 @@ const configEnvPrefix = "RUNTIME_"
 
 // configKeyToEnv rewrites a kebab-case CONFIG key into the env-var
 // form: lowercase → uppercase, '-' → '_', then RUNTIME_ prefix.
-// Keys are validated to be DNS-1123 names at the spec layer (see
-// spec.Validate). Any non-alphanumeric character that slips through
-// here is replaced with '_' so the resulting string is still a legal
-// POSIX identifier; the caller decides whether to log the rewrite.
+// Agentfile-declared keys are DNS-1123 labels (spec.Validate), so for
+// them the rewrite is collision-free; deploy-time overrides
+// (WithConfig) are not re-validated, so any non-alphanumeric character
+// that arrives that way is replaced with '_' to keep the result a
+// legal POSIX identifier.
 func configKeyToEnv(key string) string {
 	var b strings.Builder
 	b.Grow(len(configEnvPrefix) + len(key))
@@ -63,20 +65,21 @@ type EnvOptions struct {
 	// is one entry per BIN image mount.
 	BinDirs []string
 
-	// DaemonURL is the openotters daemon's TCP endpoint
-	// (e.g. http://host.docker.internal:5050) the runtime should
-	// dial back to for daemon-side capabilities (async-jobs RPCs in
-	// the next iteration). Optional — empty means the spawned
-	// runtime gets no OTTERSD_URL and any daemon client lazy-init
-	// no-ops gracefully.
+	// DaemonURL is the openotters daemon's endpoint
+	// (unix://<path> or http://<host>:<port>) the runtime dials back
+	// to for daemon-side capabilities. Injected only together with
+	// AgentToken — the spec's Daemon Callback contract is
+	// both-or-neither, and a URL without a token (or vice versa) is
+	// useless to the runtime's clients, which require the pair.
 	DaemonURL string
 
 	// AgentToken is the JWT minted by the daemon at CreateAgent. The
 	// runtime presents it as `Authorization: Bearer …` on every
 	// outbound RPC to DaemonURL. Issued and revoked by the daemon
-	// (see internal/auth on the openotters side). Optional — empty
-	// means no token is exposed and outbound RPCs would fail
-	// Unauthenticated, but the agent process still spawns fine.
+	// (see internal/auth on the openotters side). Injected only
+	// together with DaemonURL; when the pair is absent the runtime
+	// degrades gracefully (daemon-backed capability tools simply
+	// don't exist).
 	AgentToken string
 }
 
@@ -97,8 +100,8 @@ type EnvOptions struct {
 //   - TMPDIR               — <AgentRoot>/tmp
 //   - LANG                 — C.UTF-8
 //   - OTTERS_AGENT_ROOT    — <AgentRoot>
-//   - OTTERSD_URL          — <DaemonURL>      (omitted when empty)
-//   - OTTERS_AGENT_TOKEN   — <AgentToken>     (omitted when empty)
+//   - OTTERSD_URL          — <DaemonURL>      (only with AgentToken)
+//   - OTTERS_AGENT_TOKEN   — <AgentToken>     (only with DaemonURL)
 func BuildLockedEnv(opts EnvOptions) []string {
 	home := filepath.Join(opts.AgentRoot, "home")
 
@@ -112,12 +115,17 @@ func BuildLockedEnv(opts EnvOptions) []string {
 		"LANG=C.UTF-8",
 		"OTTERS_AGENT_ROOT=" + opts.AgentRoot,
 	}
-	if opts.DaemonURL != "" {
-		env = append(env, "OTTERSD_URL="+opts.DaemonURL)
+
+	// The daemon-callback pair is both-or-neither: a URL without a
+	// token (or vice versa) would make the runtime's daemon clients
+	// dial and fail Unauthenticated instead of degrading cleanly.
+	if opts.DaemonURL != "" && opts.AgentToken != "" {
+		env = append(env,
+			"OTTERSD_URL="+opts.DaemonURL,
+			"OTTERS_AGENT_TOKEN="+opts.AgentToken,
+		)
 	}
-	if opts.AgentToken != "" {
-		env = append(env, "OTTERS_AGENT_TOKEN="+opts.AgentToken)
-	}
+
 	return env
 }
 
@@ -150,13 +158,11 @@ var reservedRuntimeEnvKeys = map[string]struct{}{
 // that tooling and subprocess wrappers can read without re-parsing
 // the YAML.
 //
-// Example:  CONFIG max-tokens=2048  →  RUNTIME_MAX_TOKENS=2048
+// Example: CONFIG max-tokens=2048 → RUNTIME_MAX_TOKENS=2048.
 //
-// Keys are sorted before emission so the env list stays stable
-// across runs (helpful for diff-testing the executor's spawn env).
-// Entries are appended to base in place; reserved
-// (locked-env / provider-cred) keys can't collide because they
-// don't share the RUNTIME_ prefix.
+// Callers apply this before AppendUserEnv, so a user-declared ENV that
+// resolves to the same RUNTIME_* name overrides the CONFIG value under
+// os/exec last-write-wins semantics.
 func AppendConfigEnv(base []string, configs map[string]string) []string {
 	if len(configs) == 0 {
 		return base
@@ -164,58 +170,54 @@ func AppendConfigEnv(base []string, configs map[string]string) []string {
 
 	keys := make([]string, 0, len(configs))
 	for k := range configs {
-		if k == "" {
-			continue
+		if k != "" {
+			keys = append(keys, k)
 		}
-		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 
-	env := base
+	env := slices.Clip(base)
 	for _, k := range keys {
 		env = append(env, configKeyToEnv(k)+"="+configs[k])
 	}
+
 	return env
 }
 
 // AppendUserEnv appends user-declared envs onto a base built by
-// BuildLockedEnv (and any provider-cred entries the caller has
-// already added). Entries are appended in declaration order; later
-// duplicates win, matching os/exec's "last one wins" semantics.
-//
-// Reserved keys (the locked-env keys, plus *_API_KEY / *_API_BASE
-// suffixes used for provider creds) are filtered defensively. The
-// returned skipped slice carries the offending keys so the caller
-// can log them once. spec.Validate rejects these at build time;
-// runtime filtering here is a safety net for malformed agent.yaml.
+// BuildLockedEnv. Later duplicates win (os/exec last-write-wins). Reserved
+// keys and provider-credential suffixes are filtered defensively — spec.Validate
+// rejects them at build time, so this is a safety net for a malformed agent.yaml
+// — and returned in skipped so the caller can log them.
 func AppendUserEnv(base []string, userEnvs []*spec.Env) ([]string, []string) {
 	if len(userEnvs) == 0 {
 		return base, nil
 	}
 
-	env := base
+	env := slices.Clip(base)
 
 	var skipped []string
 
 	for _, e := range userEnvs {
-		if e == nil || e.Key == "" {
+		switch {
+		case e == nil || e.Key == "":
 			continue
-		}
-
-		if _, reserved := reservedRuntimeEnvKeys[e.Key]; reserved {
+		case isReservedEnvKey(e.Key):
 			skipped = append(skipped, e.Key)
-
-			continue
+		default:
+			env = append(env, e.Key+"="+e.Value)
 		}
-
-		if strings.HasSuffix(e.Key, "_API_KEY") || strings.HasSuffix(e.Key, "_API_BASE") {
-			skipped = append(skipped, e.Key)
-
-			continue
-		}
-
-		env = append(env, e.Key+"="+e.Value)
 	}
 
 	return env, skipped
+}
+
+// isReservedEnvKey reports whether key is one the locked-down env owns or a
+// provider-credential name that must not leak through a user ENV.
+func isReservedEnvKey(key string) bool {
+	if _, reserved := reservedRuntimeEnvKeys[key]; reserved {
+		return true
+	}
+
+	return strings.HasSuffix(key, "_API_KEY") || strings.HasSuffix(key, "_API_BASE")
 }

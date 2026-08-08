@@ -43,7 +43,7 @@ CONFIG max-tokens=1024 "Max tokens"
 
 BIN wget ghcr.io/openotters/tools/wget:latest "Fetch URL content"
 
-ADD cities.json /data/cities.json "Known cities"
+ADD cities.json "Known cities"
 `,
 		},
 		{

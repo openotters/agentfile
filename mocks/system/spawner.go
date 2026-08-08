@@ -69,9 +69,9 @@ type MockSpawner_Command_Call struct {
 // Command is a helper method to define mock.On call
 //   - name string
 //   - args ...string
-func (_e *MockSpawner_Expecter) Command(name interface{}, args ...interface{}) *MockSpawner_Command_Call {
+func (_e *MockSpawner_Expecter) Command(name any, args ...any) *MockSpawner_Command_Call {
 	return &MockSpawner_Command_Call{Call: _e.mock.On("Command",
-		append([]interface{}{name}, args...)...)}
+		append([]any{name}, args...)...)}
 }
 
 func (_c *MockSpawner_Command_Call) Run(run func(name string, args ...string)) *MockSpawner_Command_Call {

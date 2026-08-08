@@ -39,6 +39,50 @@ func (_m *MockAgent) EXPECT() *MockAgent_Expecter {
 	return &MockAgent_Expecter{mock: &_m.Mock}
 }
 
+// Addr provides a mock function for the type MockAgent
+func (_mock *MockAgent) Addr() string {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for Addr")
+	}
+
+	var r0 string
+	if returnFunc, ok := ret.Get(0).(func() string); ok {
+		r0 = returnFunc()
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+	return r0
+}
+
+// MockAgent_Addr_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Addr'
+type MockAgent_Addr_Call struct {
+	*mock.Call
+}
+
+// Addr is a helper method to define mock.On call
+func (_e *MockAgent_Expecter) Addr() *MockAgent_Addr_Call {
+	return &MockAgent_Addr_Call{Call: _e.mock.On("Addr")}
+}
+
+func (_c *MockAgent_Addr_Call) Run(run func()) *MockAgent_Addr_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockAgent_Addr_Call) Return(s string) *MockAgent_Addr_Call {
+	_c.Call.Return(s)
+	return _c
+}
+
+func (_c *MockAgent_Addr_Call) RunAndReturn(run func() string) *MockAgent_Addr_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Exec provides a mock function for the type MockAgent
 func (_mock *MockAgent) Exec(ctx context.Context, bin string, args []string, stdin string) executor.ExecResult {
 	ret := _mock.Called(ctx, bin, args, stdin)
@@ -66,7 +110,7 @@ type MockAgent_Exec_Call struct {
 //   - bin string
 //   - args []string
 //   - stdin string
-func (_e *MockAgent_Expecter) Exec(ctx interface{}, bin interface{}, args interface{}, stdin interface{}) *MockAgent_Exec_Call {
+func (_e *MockAgent_Expecter) Exec(ctx any, bin any, args any, stdin any) *MockAgent_Exec_Call {
 	return &MockAgent_Exec_Call{Call: _e.mock.On("Exec", ctx, bin, args, stdin)}
 }
 
@@ -176,7 +220,7 @@ type MockAgent_Prepare_Call struct {
 
 // Prepare is a helper method to define mock.On call
 //   - ctx context.Context
-func (_e *MockAgent_Expecter) Prepare(ctx interface{}) *MockAgent_Prepare_Call {
+func (_e *MockAgent_Expecter) Prepare(ctx any) *MockAgent_Prepare_Call {
 	return &MockAgent_Prepare_Call{Call: _e.mock.On("Prepare", ctx)}
 }
 
@@ -199,57 +243,6 @@ func (_c *MockAgent_Prepare_Call) Return(err error) *MockAgent_Prepare_Call {
 }
 
 func (_c *MockAgent_Prepare_Call) RunAndReturn(run func(ctx context.Context) error) *MockAgent_Prepare_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// Probe provides a mock function for the type MockAgent
-func (_mock *MockAgent) Probe(ctx context.Context) error {
-	ret := _mock.Called(ctx)
-
-	if len(ret) == 0 {
-		panic("no return value specified for Probe")
-	}
-
-	var r0 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context) error); ok {
-		r0 = returnFunc(ctx)
-	} else {
-		r0 = ret.Error(0)
-	}
-	return r0
-}
-
-// MockAgent_Probe_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Probe'
-type MockAgent_Probe_Call struct {
-	*mock.Call
-}
-
-// Probe is a helper method to define mock.On call
-//   - ctx context.Context
-func (_e *MockAgent_Expecter) Probe(ctx interface{}) *MockAgent_Probe_Call {
-	return &MockAgent_Probe_Call{Call: _e.mock.On("Probe", ctx)}
-}
-
-func (_c *MockAgent_Probe_Call) Run(run func(ctx context.Context)) *MockAgent_Probe_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 context.Context
-		if args[0] != nil {
-			arg0 = args[0].(context.Context)
-		}
-		run(
-			arg0,
-		)
-	})
-	return _c
-}
-
-func (_c *MockAgent_Probe_Call) Return(err error) *MockAgent_Probe_Call {
-	_c.Call.Return(err)
-	return _c
-}
-
-func (_c *MockAgent_Probe_Call) RunAndReturn(run func(ctx context.Context) error) *MockAgent_Probe_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -278,7 +271,7 @@ type MockAgent_Remove_Call struct {
 
 // Remove is a helper method to define mock.On call
 //   - ctx context.Context
-func (_e *MockAgent_Expecter) Remove(ctx interface{}) *MockAgent_Remove_Call {
+func (_e *MockAgent_Expecter) Remove(ctx any) *MockAgent_Remove_Call {
 	return &MockAgent_Remove_Call{Call: _e.mock.On("Remove", ctx)}
 }
 
@@ -329,7 +322,7 @@ type MockAgent_Run_Call struct {
 
 // Run is a helper method to define mock.On call
 //   - ctx context.Context
-func (_e *MockAgent_Expecter) Run(ctx interface{}) *MockAgent_Run_Call {
+func (_e *MockAgent_Expecter) Run(ctx any) *MockAgent_Run_Call {
 	return &MockAgent_Run_Call{Call: _e.mock.On("Run", ctx)}
 }
 
@@ -426,7 +419,7 @@ type MockAgent_Start_Call struct {
 
 // Start is a helper method to define mock.On call
 //   - ctx context.Context
-func (_e *MockAgent_Expecter) Start(ctx interface{}) *MockAgent_Start_Call {
+func (_e *MockAgent_Expecter) Start(ctx any) *MockAgent_Start_Call {
 	return &MockAgent_Start_Call{Call: _e.mock.On("Start", ctx)}
 }
 
@@ -567,7 +560,7 @@ type MockAgent_Stop_Call struct {
 
 // Stop is a helper method to define mock.On call
 //   - ctx context.Context
-func (_e *MockAgent_Expecter) Stop(ctx interface{}) *MockAgent_Stop_Call {
+func (_e *MockAgent_Expecter) Stop(ctx any) *MockAgent_Stop_Call {
 	return &MockAgent_Stop_Call{Call: _e.mock.On("Stop", ctx)}
 }
 

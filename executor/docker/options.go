@@ -64,6 +64,15 @@ func WithUsageFetcher(f agentoci.UsageFetcher) ProviderOption {
 	return func(p *Provider) { p.usageFetcher = f }
 }
 
+// WithPuller overrides the OCI puller used to extract the runtime
+// binary into the materialised tree. Default is
+// agentoci.RemotePuller(agentoci.LinuxPlatform()); mirrors the system
+// executor's WithAgentPuller so callers can stub the pull (local
+// runtime images, offline tests).
+func WithPuller(p agentoci.Puller) ProviderOption {
+	return func(pr *Provider) { pr.ociPuller = p }
+}
+
 // AgentOption configures one Agent at Create time. Mirrors the
 // system executor's per-agent option mechanism (see
 // agentfile/executor/system/options.go); both packages expose
